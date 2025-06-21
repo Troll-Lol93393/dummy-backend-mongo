@@ -1,0 +1,67 @@
+// Sample API Controller and Router in TypeScript
+// This example demonstrates how to use types for request and response in an Express app.
+
+// --- Controller (src/controllers/sampleController.ts) ---
+import { Request, Response } from "express";
+
+// Define a type for the request body
+interface CreateUserRequestBody {
+  name: string;
+  email: string;
+}
+
+// Define a type for the response body
+interface UserResponse {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/*
+Request<Params, ResBody, ReqBody, ReqQuery>
+  Params   - Type for route parameters (e.g., /user/:id → { id: string })
+  ResBody  - Type for the response body (rarely used in Request, more for Response)
+  ReqBody  - Type for the request body (req.body)
+  ReqQuery - Type for the query string (req.query)
+
+Response<ResBody>
+  ResBody  - Type for the response body (what you send with res.json or res.send)
+*/
+
+// Controller function
+export const createUser = (
+  req: Request<{}, UserResponse, CreateUserRequestBody>,
+  res: Response<UserResponse>
+) => {
+  const { name, email } = req.body;
+  // Simulate user creation
+  const newUser: UserResponse = {
+    id: "123",
+    name,
+    email,
+  };
+  res.status(201).json(newUser);
+};
+
+// --- Router (src/routes/sampleRoutes.ts) ---
+import express from "express";
+import { createUser } from "../controllers/sampleController";
+
+const router = express.Router();
+
+// POST /api/users
+router.post("/users", createUser);
+
+export default router;
+
+// --- Usage in app.ts ---
+// import sampleRoutes from "./routes/sampleRoutes";
+// app.use("/api", sampleRoutes);
+
+// --- Notes ---
+// - Request<Params, ResBody, ReqBody, ReqQuery>
+//   - Params: route params type
+//   - ResBody: response body type
+//   - ReqBody: request body type
+//   - ReqQuery: query string type
+// - Use interfaces to define the shape of your data for type safety. 
