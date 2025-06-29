@@ -19,7 +19,7 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
         userName: {
             type: String,
             lowercase: true,
-            require: [true, "Username is required !"],
+            required: [true, "Username is required !"],
             trim: true,
             unique: true,
             index: true,
@@ -27,13 +27,13 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
         email: {
             type: String,
             trim: true,
-            require: [true, "Email is required !"],
+            required: [true, "Email is required !"],
             unique: true,
         },
         firstName: {
             type: String,
             trim: true,
-            require: [true, "First Name is required !"],
+            required: [true, "First Name is required !"],
         },
         middleName: {
             type: String,
@@ -42,7 +42,7 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
         lastName: {
             type: String,
             trim: true,
-            require: [true, "Last Name is required !"],
+            required: [true, "Last Name is required !"],
         },
         phoneNumber: {
             type: String,
@@ -52,11 +52,11 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
             type: String,
             enum: ["ROLE_ADMIN", "ROLE_MANAGER", "ROLE_APPROVER", "ROLE_USER", "ROLE_TECH_ADMIN"],
             default: "ROLE_USER",
-            require: [true, "Role is required !"],
+            required: [true, "Role is required !"],
         },
         password: {
             type: String,
-            require: [true, "Password is required !"]
+            required: [true, "Password is required !"]
         },
         refreshToken: {
             type: String,
@@ -69,23 +69,25 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
 
 // to save encrypted password to db
 userSchema.pre("save", async function (next) {
-    if(!this.isModified("password")) return next();
-
-    this.password = await bcrypt.hash(this.password as string, 10)
-    next()
+    if (!this.isModified("password")) return next();
+    if (!this.password) {
+        return next(new Error("Password is required"));
+    }
+    this.password = await bcrypt.hash(this.password, 10);
+    next();
 });
 
-userSchema.methods.comparePassword = async function(password: string) {
-    return await bcrypt.compare(password, this.password as string)
+userSchema.methods.comparePassword = async function (password: string) {
+    return await bcrypt.compare(password, this.password)
 }
 
 // to generate JWT Tokens
-userSchema.methods.generateAccessToken = function() {
+userSchema.methods.generateAccessToken = function () {
     return jwt.sign(
         {
             _id: this._id,
             email: this.email,
-            userName: this.userName,  
+            userName: this.userName,
         },
         process.env.ACCESS_TOKEN_SECRET as string,
         {
@@ -95,7 +97,7 @@ userSchema.methods.generateAccessToken = function() {
     );
 }
 
-userSchema.methods.generateRefreshToken = function() {
+userSchema.methods.generateRefreshToken = function () {
     return jwt.sign(
         {
             _id: this._id,
