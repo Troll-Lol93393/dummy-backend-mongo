@@ -12,6 +12,9 @@ export interface IUser {
     role: string;
     password: string;
     refreshToken: string;
+    comparePassword(password: string): Promise<boolean>;
+    generateAccessToken(): string;
+    generateRefreshToken(): string;
 }
 
 export const userSchema: Schema<IUser> = new Schema<IUser>(
@@ -110,4 +113,4 @@ userSchema.methods.generateRefreshToken = function () {
     )
 }
 
-export const User = mongoose.model("User", userSchema)
+export const User = mongoose.model<IUser>("User", userSchema)
