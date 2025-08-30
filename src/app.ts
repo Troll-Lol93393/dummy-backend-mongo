@@ -5,10 +5,10 @@ import { ApiError } from "./utils/apiError";
 
 const app: Application = express();
 app.use(
-  cors({
-    origin: process.env.CORS_ORIGIN,
-    credentials: true,
-  })
+    cors({
+        origin: process.env.CORS_ORIGIN,
+        credentials: true,
+    })
 );
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
@@ -23,40 +23,40 @@ app.use("/api/v1/rfqs", rfqRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
-  res.status(200).json({
-    status: "OK",
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    environment: process.env.NODE_ENV || "development",
-  });
+    res.status(200).json({
+        status: "OK",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: process.env.NODE_ENV || "development",
+    });
 });
 
 // Root endpoint
 app.get("/", (req: Request, res: Response) => {
-  res.status(200).json({
-    message: "Dummy Backend API is running",
-    version: "1.0.0",
-    endpoints: {
-      health: "/health",
-      users: "/api/v1/users",
-      rfqs: "/api/v1/rfqs",
-    },
-  });
+    res.status(200).json({
+        message: "Dummy Backend API is running",
+        version: "1.0.0",
+        endpoints: {
+            health: "/health",
+            users: "/api/v1/users",
+            rfqs: "/api/v1/rfqs",
+        },
+    });
 });
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-  if (err instanceof ApiError) {
-    return res.status(err.statusCode).json({
-      success: false,
-      message: err.message,
-      errors: err.errors || [],
+    if (err instanceof ApiError) {
+        return res.status(err.statusCode).json({
+            success: false,
+            message: err.message,
+            errors: err.errors || [],
+        });
+    }
+    return res.status(500).json({
+        success: false,
+        message: "Internal Server Error",
+        errors: [err.message || "Unknown error"],
     });
-  }
-  return res.status(500).json({
-    success: false,
-    message: "Internal Server Error",
-    errors: [err.message || "Unknown error"],
-  });
 });
 
 export { app };

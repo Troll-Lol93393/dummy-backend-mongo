@@ -9,7 +9,7 @@ export interface IRfq {
     location: string;
     isQuoted: boolean;
     quotedOn?: Date;
-    status: "PENDING_SELECTION"|"AWARDED"|"COMPLETED"|"PREVIEW"|"ACCEPTING_RESPONSE";
+    status: "PENDING_SELECTION" | "AWARDED" | "COMPLETED" | "PREVIEW" | "ACCEPTING_RESPONSE";
 }
 
 export const rfqSchema: Schema<IRfq> = new Schema(
@@ -51,29 +51,29 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         },
         quotedOn: {
             type: Date,
-            required: function(this: IRfq) {
+            required: function (this: IRfq) {
                 return this.isQuoted === true;
             },
             validate: {
-                validator: function(this: IRfq, value: Date) {
+                validator: function (this: IRfq, value: Date) {
                     if (this.isQuoted && !value) {
                         return false;
                     }
                     return true;
                 },
-                message: 'Quoted date is required when PR is quoted'
-            }
+                message: "Quoted date is required when PR is quoted",
+            },
         },
-        status:{
+        status: {
             type: String,
             enum: ["PENDING_SELECTION", "AWARDED", "COMPLETED", "PREVIEW", "ACCEPTING_RESPONSE"],
             required: [true, "Status is required"],
-            default: "ACCEPTING_RESPONSE"
+            default: "ACCEPTING_RESPONSE",
         },
     },
     {
         timestamps: true,
     }
-)
+);
 
-export const RFQ = mongoose.model<IRfq>("RFQ",  rfqSchema)
+export const RFQ = mongoose.model<IRfq>("RFQ", rfqSchema);

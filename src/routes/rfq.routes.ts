@@ -1,12 +1,12 @@
 import { Router } from "express";
 import {
-  createRFQ,
-  getAllRFQs,
-  getRFQById,
-  updateRFQ,
-  deleteRFQ,
-  assignRFQ,
-  getRFQStats,
+    createRFQ,
+    getAllRFQs,
+    getRFQById,
+    updateRFQ,
+    deleteRFQ,
+    assignRFQ,
+    getRFQStats,
 } from "../controller/rfq.controller";
 import { verifyJWT, verifyRoles } from "../middlewares/auth.middleware";
 
@@ -28,8 +28,4 @@ rfqRoutes.patch("/:id", updateRFQ);
 rfqRoutes.delete("/:id", deleteRFQ);
 
 // Manager/Admin can assign RFQs
-rfqRoutes.patch(
-  "/:id/assign",
-  verifyRoles("ROLE_ADMIN", "ROLE_MANAGER"),
-  assignRFQ
-);
+rfqRoutes.patch("/:id/assign", verifyRoles("ROLE_ADMIN", "ROLE_MANAGER"), assignRFQ);

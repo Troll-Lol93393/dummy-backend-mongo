@@ -1,6 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken"
+import jwt from "jsonwebtoken";
 
 export interface IUser {
     userName: string;
@@ -59,7 +59,7 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
         },
         password: {
             type: String,
-            required: [true, "Password is required !"]
+            required: [true, "Password is required !"],
         },
         refreshToken: {
             type: String,
@@ -68,7 +68,7 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
     {
         timestamps: true,
     }
-)
+);
 
 // to save encrypted password to db
 userSchema.pre("save", async function (next) {
@@ -81,8 +81,8 @@ userSchema.pre("save", async function (next) {
 });
 
 userSchema.methods.comparePassword = async function (password: string) {
-    return await bcrypt.compare(password, this.password)
-}
+    return await bcrypt.compare(password, this.password);
+};
 
 // to generate JWT Tokens
 userSchema.methods.generateAccessToken = function () {
@@ -95,10 +95,10 @@ userSchema.methods.generateAccessToken = function () {
         process.env.ACCESS_TOKEN_SECRET as string,
         {
             expiresIn: Number(process.env.ACCESS_TOKEN_EXPIRY) || 3600,
-            algorithm: "HS256"
+            algorithm: "HS256",
         }
     );
-}
+};
 
 userSchema.methods.generateRefreshToken = function () {
     return jwt.sign(
@@ -108,9 +108,9 @@ userSchema.methods.generateRefreshToken = function () {
         process.env.REFRESH_TOKEN_SECRET as string,
         {
             expiresIn: Number(process.env.REFRESH_TOKEN_EXPIRY) || 604800,
-            algorithm: "HS256"
+            algorithm: "HS256",
         }
-    )
-}
+    );
+};
 
-export const User = mongoose.model<IUser>("User", userSchema)
+export const User = mongoose.model<IUser>("User", userSchema);
