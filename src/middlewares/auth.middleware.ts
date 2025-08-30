@@ -8,19 +8,61 @@ interface JwtPayloadWithId extends jwt.JwtPayload {
   _id: string;
 }
 
-export const verifyJWT = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const cookie = req?.cookies?.token || req.body?.token || req.header("Authorization")?.replace("Bearer ", "");
-
-  if (!cookie) {
-    throw new ApiError(401, "Unauthorized Request !");
+// Extend Express Request interface
+declare global {
+  namespace Express {
+    interface Request {
+      user?: any;
+    }
   }
+}
 
-  try {
-    const decodedToken = jwt.verify(cookie as string, process.env.JWT_SECRET_KEY as string) as JwtPayloadWithId;
-    const user = await User.findById(decodedToken._id).select("-password -refreshToken");
-    req.user = user;
-    next();
-  } catch (error) {
-    throw new ApiError(500, "An issue occurred while verifying JWT", [String(error)]);
+export const verifyJWT = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const token =
+      req.cookies?.accessToken ||
+      req.header("Authorization")?.replace("Bearer ", "");
+
+    if (!token) {
+      throw new ApiError(401, "Unauthorized Request - No token provided");
+    }
+
+    try {
+      const decodedToken = jwt.verify(
+        token,
+        process.env.ACCESS_TOKEN_SECRET as string
+      ) as JwtPayloadWithId;
+      const user = await User.findById(decodedToken._id).select(
+        "-password -refreshToken"
+      );
+
+      if (!user) {
+        throw new ApiError(401, "Invalid access token - User not found");
+      }
+
+      req.user = user;
+      next();
+    } catch (error) {
+      throw new ApiError(401, "Invalid access token", [String(error)]);
+    }
   }
-});
+);
+
+export const verifyRoles = (...allowedRoles: string[]) => {
+  return asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+      if (!req.user) {
+        throw new ApiError(
+          401,
+          "Unauthorized request - User not authenticated"
+        );
+      }
+
+      if (!allowedRoles.includes(req.user.role)) {
+        throw new ApiError(403, "Access denied - Insufficient permissions");
+      }
+
+      next();
+    }
+  );
+};
