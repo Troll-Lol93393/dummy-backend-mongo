@@ -1,14 +1,13 @@
 import { Request, Response, NextFunction } from "express";
-import { ApiError } from "../utils/apiError";
-import { asyncHandler } from "../utils/asyncHandler";
-import { User } from "../models/user.model";
-import { ApiResponse } from "../utils/apiResponse";
+import { ApiError } from "../../utils/apiError";
+import { asyncHandler } from "../../utils/asyncHandler";
+import { User } from "../../models/user.model";
+import { ApiResponse } from "../../utils/apiResponse";
 import {
     validateEmail,
     validatePassword,
     validateUserName,
-    sanitizeInput,
-} from "../utils/validation";
+} from "../../utils/validation";
 import jwt from "jsonwebtoken";
 
 type UserRegisterRequest = {
@@ -96,10 +95,8 @@ export const register = asyncHandler(
             email,
             phoneNumber,
         });
-        console.log("User: ", user);
 
         const createdUser = await User.findById(user._id).select("-password -refreshToken");
-        console.log("Created User: ", createdUser);
 
         if (!createdUser) {
             throw new ApiError(500, "Something went wrong while registering the user");
@@ -174,7 +171,7 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
         secure: true,
     };
 
-    return res
+    res
         .status(200)
         .clearCookie("accessToken", options)
         .clearCookie("refreshToken", options)
@@ -211,7 +208,7 @@ export const refreshAccessToken = asyncHandler(async (req: Request, res: Respons
 
         const { accessToken, refreshToken } = await generateAccessRefreshToken(user._id.toString());
 
-        return res
+        res
             .status(200)
             .cookie("accessToken", accessToken, options)
             .cookie("refreshToken", refreshToken, options)
@@ -222,7 +219,7 @@ export const refreshAccessToken = asyncHandler(async (req: Request, res: Respons
 });
 
 export const getCurrentUser = asyncHandler(async (req: Request, res: Response) => {
-    return res
+    res
         .status(200)
         .json(new ApiResponse(200, req.user, "Current user fetched successfully"));
 });
@@ -247,7 +244,7 @@ export const updateUserProfile = asyncHandler(async (req: Request, res: Response
         { new: true }
     ).select("-password -refreshToken");
 
-    return res.status(200).json(new ApiResponse(200, user, "Profile updated successfully"));
+    res.status(200).json(new ApiResponse(200, user, "Profile updated successfully"));
 });
 
 export const changePassword = asyncHandler(async (req: Request, res: Response) => {
@@ -271,5 +268,5 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
     user.password = newPassword;
     await user.save({ validateBeforeSave: false });
 
-    return res.status(200).json(new ApiResponse(200, {}, "Password changed successfully"));
+    res.status(200).json(new ApiResponse(200, {}, "Password changed successfully"));
 });

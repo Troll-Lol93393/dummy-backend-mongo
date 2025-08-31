@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { RFQItems } from "./rfqItems.model";
 
 export interface IRfq {
     number: string;
@@ -10,6 +11,8 @@ export interface IRfq {
     isQuoted: boolean;
     quotedOn?: Date;
     status: "PENDING_SELECTION" | "AWARDED" | "COMPLETED" | "PREVIEW" | "ACCEPTING_RESPONSE";
+    deliveryWeeks: number;
+    items: RFQItems[];
 }
 
 export const rfqSchema: Schema<IRfq> = new Schema(
@@ -70,6 +73,18 @@ export const rfqSchema: Schema<IRfq> = new Schema(
             required: [true, "Status is required"],
             default: "ACCEPTING_RESPONSE",
         },
+        deliveryWeeks: {
+            type: Number,
+            default: 10,
+            min: 1,
+            max: 52,
+            required: [true, "Delivery weeks are required"],
+        },
+        items: [{
+            type: Schema.Types.ObjectId,
+            ref: "RFQItems",
+            required: true,
+        }],
     },
     {
         timestamps: true,
