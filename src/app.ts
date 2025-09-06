@@ -19,9 +19,9 @@ import { userRoutes } from "./routes/user.routes";
 import { rfqRoutes } from "./routes/rfq.routes";
 import { itemRoutes } from "./routes/item.routes";
 
-app.use("/api/v1/users", userRoutes);
-app.use("/api/v1/rfqs", rfqRoutes);
-app.use("/api/v1/items", itemRoutes);
+app.use("/api/v1/user", userRoutes);
+app.use("/api/v1/rfq", rfqRoutes);
+app.use("/api/v1/item", itemRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {

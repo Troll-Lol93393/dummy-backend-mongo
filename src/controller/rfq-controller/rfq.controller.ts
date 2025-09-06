@@ -41,7 +41,8 @@ export const getRFQs = asyncHandler(async (req: Request, res: Response, next: Ne
 
 export const getRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { rfqId } = req.params;
-    const rfq = await RFQ.findById(rfqId, { isDeleted: false });
+    const rfq = await RFQ.findOne({ rfqId, isDeleted: false });
+
     if (!rfq) {
         throw new ApiError(404, "RFQ not found");
     }
