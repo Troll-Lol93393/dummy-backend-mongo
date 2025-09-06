@@ -26,8 +26,7 @@ export const createItem = asyncHandler(async (req: Request, res: Response, next:
         size: size ?? "",
     });
 
-    res.status(201).json(new ApiResponse(201, newItem, "Item created succesfully !"))
-
+    res.status(201).json(new ApiResponse(201, newItem, "Item created succesfully !"));
 });
 
 export const getItem = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
@@ -114,3 +113,9 @@ export const hardDeleteItem = asyncHandler(async (req: Request, res: Response, n
 
     res.status(200).json(new ApiResponse(200, null, "Item permanently deleted successfully !"));
 });
+
+export const getAllItems = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const items = await Item.find({isDeleted: false});
+    console.log(items);
+    res.status(200).json(new ApiResponse(200, items, "Items fetched successfully !"));
+})

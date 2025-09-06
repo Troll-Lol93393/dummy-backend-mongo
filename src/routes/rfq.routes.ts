@@ -1,31 +1,23 @@
-// import { Router } from "express";
-// // import {
-// //     createRFQ,
-// //     getAllRFQs,
-// //     getRFQById,
-// //     updateRFQ,
-// //     deleteRFQ,
-// //     assignRFQ,
-// //     getRFQStats,
-// // } from "../controller/rfq-controller/rfq.controller";
-// import { verifyJWT, verifyRoles } from "../middlewares/auth.middleware";
+import { Router } from "express";
+import {
+    createRFQ,
+    getRFQs,
+    getRFQ,
+    deleteRFQ,
+} from "../controller/rfq-controller/rfq.controller";
+// import { verifyJWT } from "../middlewares/auth.middleware";
 
-// export const rfqRoutes = Router();
+export const rfqRoutes = Router();
 
-// // All RFQ routes require authentication
+// All RFQ routes require authentication
 // rfqRoutes.use(verifyJWT);
 
-// // Public authenticated routes
-// rfqRoutes.get("/", getAllRFQs);
-// rfqRoutes.get("/stats", getRFQStats);
-// rfqRoutes.get("/:id", getRFQById);
+// Public authenticated routes
+rfqRoutes.get("/all", getRFQs);
+rfqRoutes.get("/:rfqId", getRFQ);
 
-// // User can create RFQs
-// rfqRoutes.post("/", createRFQ);
+// User can create RFQs
+rfqRoutes.post("/", createRFQ);
 
-// // User can update/delete their own RFQs
-// rfqRoutes.patch("/:id", updateRFQ);
-// rfqRoutes.delete("/:id", deleteRFQ);
-
-// // Manager/Admin can assign RFQs
-// rfqRoutes.patch("/:id/assign", verifyRoles("ROLE_ADMIN", "ROLE_MANAGER"), assignRFQ);
+// User can update/delete their own RFQs
+rfqRoutes.delete("/:rfqId", deleteRFQ);

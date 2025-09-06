@@ -13,6 +13,9 @@ export interface IRfq {
     status: "PENDING_SELECTION" | "AWARDED" | "COMPLETED" | "PREVIEW" | "ACCEPTING_RESPONSE";
     deliveryWeeks: number;
     items: RFQItems[];
+    isDeleted: boolean;
+    createdBy: string;
+    updatedBy: string;
 }
 
 export const rfqSchema: Schema<IRfq> = new Schema(
@@ -41,12 +44,12 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         companyName: {
             type: String,
             trim: true,
-            required: [true, "Due Date is required !"],
+            required: [true, "Company name is required !"],
         },
         location: {
             type: String,
             trim: true,
-            required: [true, "Due Date is required !"],
+            required: [true, "Location is required !"],
         },
         isQuoted: {
             type: Boolean,
@@ -75,16 +78,19 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         },
         deliveryWeeks: {
             type: Number,
-            default: 10,
             min: 1,
             max: 52,
-            required: [true, "Delivery weeks are required"],
         },
         items: [{
             type: Schema.Types.ObjectId,
             ref: "RFQItems",
             required: true,
         }],
+        isDeleted: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
     },
     {
         timestamps: true,
