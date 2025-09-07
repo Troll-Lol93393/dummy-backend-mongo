@@ -1,13 +1,13 @@
 import { Request, Response, NextFunction } from "express";
-import { ApiError } from "../../utils/apiError";
-import { asyncHandler } from "../../utils/asyncHandler";
-import { ApiResponse } from "../../utils/apiResponse";
-import { RFQ } from "../../models/rfq.models";
+import { ApiError } from "../utils/apiError";
+import { asyncHandler } from "../utils/asyncHandler";
+import { ApiResponse } from "../utils/apiResponse";
+import { RFQ } from "../models/rfq.models";
 
 export const createRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { number, startDate, dueDate, ownerName, companyName, items, location } = req.body;
 
-    if ([number, startDate, dueDate, ownerName, companyName, items, location ].some(value => !value || value?.trim() === "")) {
+    if ([number, startDate, dueDate, ownerName, companyName, items, location].some(value => !value || value?.trim() === "")) {
         throw new ApiError(400, "All fields are required");
     }
 

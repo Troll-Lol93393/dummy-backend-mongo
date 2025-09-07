@@ -10,19 +10,19 @@ export interface RFQItems {
     drawingUrl?: string;
     itemTechSpecs: ItemTechSpecs;
     commercialSpecs: CommercialSpecs;
-}
+}   
 
-export const rfqItemsSchema: Schema<RFQItems> = new Schema(
+export const RfqItemsSchema: Schema<RFQItems> = new Schema(
     {
         item: {
             type: Schema.Types.ObjectId,
             ref: "Item",
+            default: {},
             required: [true, "Item is required"],
         },
         drawingNumber: {
             type: String,
             trim: true,
-            required: [true, "Drawing number is required"],
         },
         drawingUrl: {
             type: String,
@@ -36,12 +36,12 @@ export const rfqItemsSchema: Schema<RFQItems> = new Schema(
         itemTechSpecs: {
             type: Schema.Types.ObjectId,
             ref: "ItemTechSpecs",
-            required: [true, "Item tech specs is required"],
+            default: {},
         },
         commercialSpecs: {
             type: Schema.Types.ObjectId,
             ref: "CommercialSpecs",
-            required: [true, "Commercial specs is required"],
+            default: {},
         },
     },
     {
@@ -49,4 +49,4 @@ export const rfqItemsSchema: Schema<RFQItems> = new Schema(
     }
 );
 
-export const RFQItems = mongoose.model<RFQItems>("RFQItems", rfqItemsSchema);
+export const RFQItems = mongoose.model<RFQItems>("RFQItems", RfqItemsSchema);

@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
-import { ApiError } from "../../utils/apiError";
-import { asyncHandler } from "../../utils/asyncHandler";
-import { ApiResponse } from "../../utils/apiResponse";
-import { Item } from "../../models/item.model";
+import { ApiError } from "../utils/apiError";
+import { asyncHandler } from "../utils/asyncHandler";
+import { ApiResponse } from "../utils/apiResponse";
+import { Item } from "../models/item.model";
 import mongoose from "mongoose";
 
 export const createItem = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {

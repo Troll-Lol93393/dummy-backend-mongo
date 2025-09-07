@@ -4,7 +4,7 @@ import {
     getRFQs,
     getRFQ,
     deleteRFQ,
-} from "../controller/rfq-controller/rfq.controller";
+} from "../controller/rfq.controller";
 // import { verifyJWT } from "../middlewares/auth.middleware";
 
 export const rfqRoutes = Router();

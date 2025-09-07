@@ -1,13 +1,13 @@
 import { Request, Response, NextFunction } from "express";
-import { ApiError } from "../../utils/apiError";
-import { asyncHandler } from "../../utils/asyncHandler";
-import { User } from "../../models/user.model";
-import { ApiResponse } from "../../utils/apiResponse";
+import { ApiError } from "../utils/apiError";
+import { asyncHandler } from "../utils/asyncHandler";
+import { User } from "../models/user.model";
+import { ApiResponse } from "../utils/apiResponse";
 import {
     validateEmail,
     validatePassword,
     validateUserName,
-} from "../../utils/validation";
+} from "../utils/validation";
 import jwt from "jsonwebtoken";
 
 type UserRegisterRequest = {
