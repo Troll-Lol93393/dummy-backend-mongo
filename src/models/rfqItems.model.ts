@@ -10,6 +10,7 @@ export interface RFQItems {
     drawingUrl?: string;
     itemTechSpecs: ItemTechSpecs;
     commercialSpecs: CommercialSpecs;
+    isDeleted: boolean;
 }   
 
 export const RfqItemsSchema: Schema<RFQItems> = new Schema(
@@ -42,6 +43,11 @@ export const RfqItemsSchema: Schema<RFQItems> = new Schema(
             type: Schema.Types.ObjectId,
             ref: "CommercialSpecs",
             default: {},
+        },
+        isDeleted: {
+            type: Boolean,
+            default: false,
+            index: true,
         },
     },
     {

@@ -21,46 +21,32 @@ export const commercialSpecsSchema: Schema<CommercialSpecs> = new Schema(
         },
         rawMaterialCost: {
             type: Number,
-            min: 1,
-            required: [true, "Raw material cost is required"],
         },
         laborCost: {
             type: Number,
-            min: 1,
-            required: [true, "Labor cost is required"],
         },
         profitMargin: {
             type: Number,
-            min: 1,
-            required: [true, "Profit margin is required"],
         },
         totalCost: {
             type: Number,
-            min: 1,
-            required: [true, "Total cost is required"],
         },
         packingCost: {
             type: Number,
-            min: 1,
-            required: [true, "Packing cost is required"],
         },
         shippingCost: {
             type: Number,
-            min: 1,
-            required: [true, "Shipping cost is required"],
         },
         sellingPrice: {
             type: Number,
-            min: 1,
-            required: [true, "Selling price is required"],
         },
         otherCosts: {
             type: Number,
-            min: 1,
-            required: [true, "Other costs are required"],
         },
     },
     {
         timestamps: true,
     }
 )
+
+export const CommercialSpecs = mongoose.model<CommercialSpecs>("CommercialSpecs", commercialSpecsSchema);

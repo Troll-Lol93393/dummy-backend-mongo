@@ -7,12 +7,12 @@ import { RFQ } from "../models/rfq.models";
 export const createRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { number, startDate, dueDate, ownerName, companyName, items, location } = req.body;
 
-    if ([number, startDate, dueDate, ownerName, companyName, items, location].some(value => !value || value?.trim() === "")) {
+    if ([number, startDate, dueDate, ownerName, companyName, location].some(value => !value || value?.trim() === "")) {
         throw new ApiError(400, "All fields are required");
     }
 
     if (!items || items.length === 0) {
-        throw new ApiError(400, "Items are required");
+        throw new ApiError(400, "Atleast one item is required");
     }
 
     const newRFQ = await RFQ.create({

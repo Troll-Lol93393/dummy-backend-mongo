@@ -19,7 +19,6 @@ export const itemTechSpecsSchema: Schema<ItemTechSpecs> = new Schema(
         material: {
             type: String,
             trim: true,
-            required: [true, "Material is required"],
         },
         diameter: {
             type: String,

@@ -18,10 +18,12 @@ app.use(cookieParser());
 import { userRoutes } from "./routes/user.routes";
 import { rfqRoutes } from "./routes/rfq.routes";
 import { itemRoutes } from "./routes/item.routes";
+import { rfqItemRoutes } from "./routes/rfqItem.route";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
 app.use("/api/v1/item", itemRoutes);
+app.use("/api/v1/rfqItem", rfqItemRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
@@ -43,6 +45,7 @@ app.get("/", (req: Request, res: Response) => {
             users: "/api/v1/users",
             rfqs: "/api/v1/rfqs",
             items: "/api/v1/items",
+            rfqItems: "/api/v1/rfqItems",
         },
     });
 });

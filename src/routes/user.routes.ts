@@ -7,7 +7,7 @@ import {
     getCurrentUser,
     updateUserProfile,
     changePassword,
-} from "../controller/user-controller/user.controller";
+} from "../controller/user.controller";
 import { verifyJWT, verifyRoles } from "../middlewares/auth.middleware";
 import { ApiResponse } from "../utils/apiResponse";
 

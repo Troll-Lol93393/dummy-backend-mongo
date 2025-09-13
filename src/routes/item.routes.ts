@@ -7,7 +7,7 @@ import {
     restoreItem,
     hardDeleteItem,
     getAllItems,
-} from "../controller/item-controller/item.controller";
+} from "../controller/item.controller";
 import { verifyJWT } from "../middlewares/auth.middleware";
 
 const router = Router();
