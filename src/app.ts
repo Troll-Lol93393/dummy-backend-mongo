@@ -40,13 +40,6 @@ app.get("/", (req: Request, res: Response) => {
     res.status(200).json({
         message: "Dummy Backend API is running",
         version: "1.0.0",
-        endpoints: {
-            health: "/health",
-            users: "/api/v1/users",
-            rfqs: "/api/v1/rfqs",
-            items: "/api/v1/items",
-            rfqItems: "/api/v1/rfqItems",
-        },
     });
 });
 
