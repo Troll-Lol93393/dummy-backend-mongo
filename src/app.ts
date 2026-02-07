@@ -6,10 +6,22 @@ import { ApiError } from "./utils/apiError";
 const app: Application = express();
 app.use(
     cors({
-        origin: process.env.CORS_ORIGIN,
-        credentials: true,
+        origin: [
+            "https://hoppscotch.io",
+            "https://app.hoppscotch.io",
+            "http://localhost:3000"
+        ],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With"
+        ],
+        credentials: true
     })
 );
+
+app.options("*", cors());
 app.use(express.json({ limit: "16kb" }));
 app.use(express.urlencoded({ extended: true, limit: "16kb" }));
 app.use(cookieParser());
