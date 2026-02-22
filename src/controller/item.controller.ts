@@ -116,6 +116,5 @@ export const hardDeleteItem = asyncHandler(async (req: Request, res: Response, n
 
 export const getAllItems = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const items = await Item.find({isDeleted: false});
-    console.log(items);
     res.status(200).json(new ApiResponse(200, items, "Items fetched successfully !"));
 })

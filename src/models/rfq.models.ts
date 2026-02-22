@@ -2,7 +2,7 @@ import mongoose, { Schema } from "mongoose";
 import { RFQItems } from "./rfqItems.model";
 
 export interface IRfq {
-    number: string;
+    prNumber: string;
     startDate: Date;
     dueDate: Date;
     ownerName: string;
@@ -20,7 +20,7 @@ export interface IRfq {
 
 export const rfqSchema: Schema<IRfq> = new Schema(
     {
-        number: {
+        prNumber: {
             type: String,
             required: [true, "PR number is required !"],
             trim: true,

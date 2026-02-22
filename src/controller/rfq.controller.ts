@@ -5,9 +5,9 @@ import { ApiResponse } from "../utils/apiResponse";
 import { RFQ } from "../models/rfq.models";
 
 export const createRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-    const { number, startDate, dueDate, ownerName, companyName, items, location } = req.body;
+    const { prNumber, startDate, dueDate, ownerName, companyName, items, location } = req.body;
 
-    if ([number, startDate, dueDate, ownerName, companyName, location].some(value => !value || value?.trim() === "")) {
+    if ([prNumber, startDate, dueDate, ownerName, companyName, location].some(value => !value || value?.trim() === "")) {
         throw new ApiError(400, "All fields are required");
     }
 
@@ -16,7 +16,7 @@ export const createRFQ = asyncHandler(async (req: Request, res: Response, next: 
     }
 
     const newRFQ = await RFQ.create({
-        number,
+        prNumber,
         startDate,
         dueDate,
         ownerName,
@@ -26,9 +26,9 @@ export const createRFQ = asyncHandler(async (req: Request, res: Response, next: 
         isQuoted: false,
         isDeleted: false,
         quotedOn: null,
-        status: "ACCEPTING_RESPONSE",
-        createdBy: req.user._id,
-        updatedBy: req.user._id,
+        status: "PREVIEW",
+        createdBy: req.user._id || "",
+        updatedBy: req.user._id || "",
     });
 
     res.status(201).json(new ApiResponse(201, newRFQ, "RFQ created successfully"));
@@ -41,7 +41,7 @@ export const getRFQs = asyncHandler(async (req: Request, res: Response, next: Ne
 
 export const getRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { rfqId } = req.params;
-    const rfq = await RFQ.findOne({ rfqId, isDeleted: false });
+    const rfq = await RFQ.findOne({ prNumber: rfqId, isDeleted: false });
 
     if (!rfq) {
         throw new ApiError(404, "RFQ not found");

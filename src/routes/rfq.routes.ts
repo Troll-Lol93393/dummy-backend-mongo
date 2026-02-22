@@ -6,22 +6,22 @@ import {
     deleteRFQ,
 } from "../controller/rfq.controller";
 import { upload } from "../middlewares/multer.middleware";
-// import { verifyJWT } from "../middlewares/auth.middleware";
+import { verifyJWT } from "../middlewares/auth.middleware";
 
 export const rfqRoutes = Router();
 
 // All RFQ routes require authentication
-// rfqRoutes.use(verifyJWT);
+rfqRoutes.use(verifyJWT);
 
 // Public authenticated routes
-rfqRoutes.get("/all", getRFQs);
-rfqRoutes.get("/:rfqId", getRFQ);
+rfqRoutes.get("/all", verifyJWT, getRFQs);
+rfqRoutes.get("/:rfqId", verifyJWT, getRFQ);
 
 // User can create RFQs
-rfqRoutes.post("/", createRFQ);
+rfqRoutes.post("/", verifyJWT, createRFQ);
 
 // Create RFQ with file upload
-rfqRoutes.post("/uploadFile",
+rfqRoutes.post("/uploadFile", verifyJWT,
     upload.single("file"), ((req, res) => {
         if (!req.file) {
             return res.status(400).json({ message: "No file uploaded" });
@@ -35,4 +35,4 @@ rfqRoutes.post("/uploadFile",
 );
 
 // User can update/delete their own RFQs
-rfqRoutes.delete("/:rfqId", deleteRFQ);
+rfqRoutes.delete("/:rfqId", verifyJWT, deleteRFQ);

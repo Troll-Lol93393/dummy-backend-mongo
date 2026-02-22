@@ -12,15 +12,15 @@ import { verifyJWT } from "../middlewares/auth.middleware";
 
 const router = Router();
 
-// router.use(verifyJWT);
+router.use(verifyJWT);
 
 // Item CRUD routes
-router.post("/", createItem);
-router.get("/", getItem);
-router.put("/", updateItem);
-router.delete("/", deleteItem); 
-router.patch("/restore", restoreItem);
-router.delete("/permanent", hardDeleteItem); 
-router.get("/all", getAllItems);
+router.post("/", verifyJWT, createItem);
+router.get("/", verifyJWT, getItem);
+router.put("/", verifyJWT, updateItem);
+router.delete("/", verifyJWT, deleteItem); 
+router.patch("/restore", verifyJWT, restoreItem);
+router.delete("/permanent", verifyJWT, hardDeleteItem); 
+router.get("/all", verifyJWT, getAllItems);
 
 export { router as itemRoutes };
