@@ -1,5 +1,5 @@
 {
-    "name": "dummy-backend-mongo",
+    "name": "sheth-backend",
     "version": "1.0.0",
     "description": "Express TypeScript backend with MongoDB",
     "main": "dist/index.js",
