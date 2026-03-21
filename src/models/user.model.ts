@@ -53,8 +53,8 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
         },
         role: {
             type: String,
-            enum: ["ROLE_ADMIN", "ROLE_MANAGER", "ROLE_APPROVER", "ROLE_USER", "ROLE_TECH_ADMIN"],
-            default: "ROLE_USER",
+            enum: ["ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF", "ROLE_FIELD_STAFF"],
+            default: "ROLE_FIELD_STAFF",
             required: [true, "Role is required !"],
         },
         password: {

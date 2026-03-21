@@ -28,7 +28,7 @@ userRoutes.patch("/change-password", verifyJWT, changePassword);
 userRoutes.get(
     "/admin/users",
     verifyJWT,
-    verifyRoles("ROLE_ADMIN", "ROLE_TECH_ADMIN"),
+    verifyRoles("ROLE_OWNER", "ROLE_ADMIN"),
     (req, res) => {
         // TODO: Implement get all users functionality
         res.json(new ApiResponse(200, [], "Get all users endpoint - TODO"));

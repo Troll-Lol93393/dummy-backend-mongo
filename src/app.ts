@@ -9,7 +9,8 @@ app.use(
         origin: [
             "https://hoppscotch.io",
             "https://app.hoppscotch.io",
-            "http://localhost:3000"
+            "http://localhost:3000",
+            "http://localhost:3004"
         ],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: [
@@ -22,8 +23,8 @@ app.use(
 );
 
 app.options("*", cors());
-app.use(express.json({ limit: "16kb" }));
-app.use(express.urlencoded({ extended: true, limit: "16kb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
 // import routes
@@ -31,11 +32,13 @@ import { userRoutes } from "./routes/user.routes";
 import { rfqRoutes } from "./routes/rfq.routes";
 import { itemRoutes } from "./routes/item.routes";
 import { rfqItemRoutes } from "./routes/rfqItem.route";
+import { rfpExtractionRoutes } from "./routes/rfpExtraction.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
 app.use("/api/v1/item", itemRoutes);
 app.use("/api/v1/rfqItem", rfqItemRoutes);
+app.use("/api/v1/rfp-extract", rfpExtractionRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
