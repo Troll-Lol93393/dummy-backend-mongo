@@ -21,6 +21,7 @@
     "author": "",
     "license": "ISC",
     "dependencies": {
+        "adm-zip": "^0.5.16",
         "axios": "^1.13.6",
         "bcrypt": "^6.0.0",
         "cloudinary": "^2.7.0",
@@ -37,6 +38,7 @@
         "word-extractor": "^1.0.4"
     },
     "devDependencies": {
+        "@types/adm-zip": "^0.5.8",
         "@types/bcrypt": "^5.0.2",
         "@types/cookie-parser": "^1.4.9",
         "@types/cors": "^2.8.19",

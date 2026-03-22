@@ -1,5 +1,6 @@
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
+import { ApiResponse } from "../utils/apiResponse";
 import { Request, Response, NextFunction } from "express";
 import { Item } from "../models/item.model";
 import { RFQItems } from "../models/rfqItems.model";
@@ -96,6 +97,90 @@ export const createRfqItems = asyncHandler(async (req: Request, res: Response, n
         message: "RFQ Item added successfully",
         data: rfqItem,
     });
+});
+
+export const updateRfqItem = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqItemId } = req.params;
+    const { quantity, drawingNumber, drawingUrl, itemTechSpecs, commercialSpecs } = req.body;
+
+    const rfqItem = await RFQItems.findOne({ _id: rfqItemId, isDeleted: false }).populate([
+        "itemTechSpecs",
+        "commercialSpecs",
+    ]);
+    if (!rfqItem) {
+        throw new ApiError(404, "RFQ Item not found");
+    }
+
+    if (quantity !== undefined) rfqItem.quantity = quantity;
+    if (drawingNumber !== undefined) rfqItem.drawingNumber = drawingNumber;
+    if (drawingUrl !== undefined) rfqItem.drawingUrl = drawingUrl;
+
+    if (itemTechSpecs) {
+        const existingTech = rfqItem.itemTechSpecs as ItemTechSpecs | null;
+        if (existingTech && existingTech.material !== undefined) {
+            // Existing doc found via populate — update it
+            await ItemTechSpecs.findByIdAndUpdate((existingTech as any)._id, {
+                $set: {
+                    material: itemTechSpecs.material,
+                    diameter: itemTechSpecs.diameter,
+                    length: itemTechSpecs.length,
+                    weight: itemTechSpecs.weight,
+                    grade: itemTechSpecs.grade,
+                },
+            });
+        } else {
+            const newTechSpecs = await ItemTechSpecs.create({
+                material: itemTechSpecs.material ?? "",
+                diameter: itemTechSpecs.diameter ?? "",
+                length: itemTechSpecs.length ?? "",
+                weight: itemTechSpecs.weight ?? "",
+                grade: itemTechSpecs.grade ?? "",
+            });
+            rfqItem.itemTechSpecs = newTechSpecs._id as unknown as ItemTechSpecs;
+        }
+    }
+
+    if (commercialSpecs) {
+        const existingCommercial = rfqItem.commercialSpecs as CommercialSpecs | null;
+        if (existingCommercial && existingCommercial.currency !== undefined) {
+            await CommercialSpecs.findByIdAndUpdate((existingCommercial as any)._id, {
+                $set: {
+                    currency: commercialSpecs.currency,
+                    rawMaterialCost: commercialSpecs.rawMaterialCost,
+                    laborCost: commercialSpecs.laborCost,
+                    profitMargin: commercialSpecs.profitMargin,
+                    totalCost: commercialSpecs.totalCost,
+                    packingCost: commercialSpecs.packingCost,
+                    shippingCost: commercialSpecs.shippingCost,
+                    sellingPrice: commercialSpecs.sellingPrice,
+                    otherCosts: commercialSpecs.otherCosts,
+                },
+            });
+        } else {
+            const newCommercialSpecs = await CommercialSpecs.create({
+                currency: commercialSpecs.currency ?? "INR",
+                rawMaterialCost: commercialSpecs.rawMaterialCost ?? 0,
+                laborCost: commercialSpecs.laborCost ?? 0,
+                profitMargin: commercialSpecs.profitMargin ?? 0,
+                totalCost: commercialSpecs.totalCost ?? 0,
+                packingCost: commercialSpecs.packingCost ?? 0,
+                shippingCost: commercialSpecs.shippingCost ?? 0,
+                sellingPrice: commercialSpecs.sellingPrice ?? 0,
+                otherCosts: commercialSpecs.otherCosts ?? 0,
+            });
+            rfqItem.commercialSpecs = newCommercialSpecs._id as unknown as CommercialSpecs;
+        }
+    }
+
+    await rfqItem.save();
+
+    const updatedItem = await RFQItems.findById(rfqItemId).populate([
+        "item",
+        "itemTechSpecs",
+        "commercialSpecs",
+    ]);
+
+    res.status(200).json(new ApiResponse(200, updatedItem, "RFQ Item updated successfully"));
 });
 
 export const getAllRfqItems = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {

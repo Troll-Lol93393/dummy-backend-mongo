@@ -41,12 +41,44 @@ export const getRFQs = asyncHandler(async (req: Request, res: Response, next: Ne
 
 export const getRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { rfqId } = req.params;
-    const rfq = await RFQ.findOne({ prNumber: rfqId, isDeleted: false });
+    const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false }).populate({
+        path: "items",
+        match: { isDeleted: false },
+        populate: [
+            { path: "item" },
+            { path: "itemTechSpecs" },
+            { path: "commercialSpecs" },
+        ],
+    });
 
     if (!rfq) {
         throw new ApiError(404, "RFQ not found");
     }
     res.status(200).json(new ApiResponse(200, rfq, "RFQ fetched successfully"));
+});
+
+export const updateRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqId } = req.params;
+    const { prNumber, startDate, dueDate, ownerName, companyName, location, status, deliveryWeeks } =
+        req.body;
+
+    const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false });
+    if (!rfq) {
+        throw new ApiError(404, "RFQ not found");
+    }
+
+    if (prNumber !== undefined) rfq.prNumber = prNumber;
+    if (startDate !== undefined) rfq.startDate = startDate;
+    if (dueDate !== undefined) rfq.dueDate = dueDate;
+    if (ownerName !== undefined) rfq.ownerName = ownerName;
+    if (companyName !== undefined) rfq.companyName = companyName;
+    if (location !== undefined) rfq.location = location;
+    if (status !== undefined) rfq.status = status;
+    if (deliveryWeeks !== undefined) rfq.deliveryWeeks = deliveryWeeks;
+
+    await rfq.save();
+
+    res.status(200).json(new ApiResponse(200, rfq, "RFQ updated successfully"));
 });
 
 export const deleteRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {

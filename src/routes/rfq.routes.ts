@@ -3,6 +3,7 @@ import {
     createRFQ,
     getRFQs,
     getRFQ,
+    updateRFQ,
     deleteRFQ,
 } from "../controller/rfq.controller";
 import { upload } from "../middlewares/multer.middleware";
@@ -35,4 +36,5 @@ rfqRoutes.post("/uploadFile", verifyJWT,
 );
 
 // User can update/delete their own RFQs
+rfqRoutes.put("/:rfqId", verifyJWT, updateRFQ);
 rfqRoutes.delete("/:rfqId", verifyJWT, deleteRFQ);

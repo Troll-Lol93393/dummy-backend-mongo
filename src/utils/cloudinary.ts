@@ -15,10 +15,10 @@ export const uploadFileToCloudinary = async (localFilePath: string) => {
         });
         return response;
     } catch (error: unknown) {
-        fs.unlinkSync(localFilePath);
-        if (error instanceof Error) {
-            console.log(error.message);
+        if (fs.existsSync(localFilePath)) {
+            fs.unlinkSync(localFilePath);
         }
+        console.error("Cloudinary upload error:", error);
         return null;
     }
 };
