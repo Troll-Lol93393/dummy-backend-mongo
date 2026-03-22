@@ -35,8 +35,37 @@ export const createRFQ = asyncHandler(async (req: Request, res: Response, next: 
 });
 
 export const getRFQs = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-    const rfqs = await RFQ.find({ isDeleted: false });
-    res.status(200).json(new ApiResponse(200, rfqs, "RFQs fetched successfully"));
+    const page = parseInt(req.query.page as string) || 1;
+    const size = parseInt(req.query.size as string) || 10;
+    const search = (req.query.search as string) || "";
+    const sortBy = (req.query.sortBy as string) || "createdAt";
+    const sortOrder = (req.query.sortOrder as string) === "asc" ? 1 : -1;
+
+    const filter: Record<string, unknown> = { isDeleted: false };
+    if (search) {
+        filter.$or = [
+            { prNumber: { $regex: search, $options: "i" } },
+            { companyName: { $regex: search, $options: "i" } },
+            { ownerName: { $regex: search, $options: "i" } },
+            { location: { $regex: search, $options: "i" } },
+        ];
+    }
+
+    const totalCount = await RFQ.countDocuments(filter);
+    const rfqs = await RFQ.find(filter)
+        .sort({ [sortBy]: sortOrder })
+        .skip((page - 1) * size)
+        .limit(size);
+
+    res.status(200).json(
+        new ApiResponse(200, {
+            data: rfqs,
+            totalCount,
+            page,
+            size,
+            totalPages: Math.ceil(totalCount / size),
+        }, "RFQs fetched successfully")
+    );
 });
 
 export const getRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {

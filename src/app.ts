@@ -10,15 +10,11 @@ app.use(
             "https://hoppscotch.io",
             "https://app.hoppscotch.io",
             "http://localhost:3000",
-            "http://localhost:3004"
+            "http://localhost:3004",
         ],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: [
-            "Content-Type",
-            "Authorization",
-            "X-Requested-With"
-        ],
-        credentials: true
+        allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+        credentials: true,
     })
 );
 
@@ -33,12 +29,18 @@ import { rfqRoutes } from "./routes/rfq.routes";
 import { itemRoutes } from "./routes/item.routes";
 import { rfqItemRoutes } from "./routes/rfqItem.route";
 import { rfpExtractionRoutes } from "./routes/rfpExtraction.routes";
+import { masterRoutes } from "./routes/master.routes";
+import { partyRoutes } from "./routes/party.routes";
+import { costingRoutes } from "./routes/costing.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
 app.use("/api/v1/item", itemRoutes);
 app.use("/api/v1/rfqItem", rfqItemRoutes);
 app.use("/api/v1/rfp-extract", rfpExtractionRoutes);
+app.use("/api/v1/master", masterRoutes);
+app.use("/api/v1/party", partyRoutes);
+app.use("/api/v1/costing", costingRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
