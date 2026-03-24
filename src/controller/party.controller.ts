@@ -9,6 +9,8 @@ import mongoose from "mongoose";
 import * as XLSX from "xlsx";
 import * as fs from "fs";
 
+const VALID_PARTY_TYPES = ["RAW_MATERIAL_DEALER", "LABOUR_JOB_WORKER", "COMPLETE_SUPPLY"];
+
 const PARTY_TYPE_MODEL_MAP: Record<string, string> = {
     RAW_MATERIAL_DEALER: "RawMaterialType",
     LABOUR_JOB_WORKER: "LabourProcessType",
@@ -22,41 +24,45 @@ export const createParty = asyncHandler(
     async (req: Request, res: Response, next: NextFunction) => {
         const { partyType, partySubType } = req.body;
 
-        if (!partyType || !partySubType) {
+        if (!partyType) {
+            throw new ApiError(400, "Party type is required");
+        }
+
+        if (!VALID_PARTY_TYPES.includes(partyType)) {
             throw new ApiError(
                 400,
-                "Party type and party sub type are required"
+                "Party type must be RAW_MATERIAL_DEALER, LABOUR_JOB_WORKER, or COMPLETE_SUPPLY"
             );
         }
 
-        if (!["RAW_MATERIAL_DEALER", "LABOUR_JOB_WORKER"].includes(partyType)) {
-            throw new ApiError(
-                400,
-                "Party type must be either RAW_MATERIAL_DEALER or LABOUR_JOB_WORKER"
-            );
-        }
-
-        if (!mongoose.Types.ObjectId.isValid(partySubType)) {
-            throw new ApiError(400, "Invalid party sub type ID");
-        }
-
-        // Validate that the partySubType exists in the correct collection
-        if (partyType === "RAW_MATERIAL_DEALER") {
-            const rawMaterialType = await RawMaterialType.findById(partySubType);
-            if (!rawMaterialType) {
-                throw new ApiError(
-                    404,
-                    "Raw material type not found for the given partySubType"
-                );
+        // partySubType is required for RAW_MATERIAL_DEALER and LABOUR_JOB_WORKER
+        if (partyType !== "COMPLETE_SUPPLY") {
+            if (!partySubType) {
+                throw new ApiError(400, "Party sub type is required for this party type");
             }
-        } else {
-            const labourProcessType =
-                await LabourProcessType.findById(partySubType);
-            if (!labourProcessType) {
-                throw new ApiError(
-                    404,
-                    "Labour process type not found for the given partySubType"
-                );
+
+            if (!mongoose.Types.ObjectId.isValid(partySubType)) {
+                throw new ApiError(400, "Invalid party sub type ID");
+            }
+
+            // Validate that the partySubType exists in the correct collection
+            if (partyType === "RAW_MATERIAL_DEALER") {
+                const rawMaterialType = await RawMaterialType.findById(partySubType);
+                if (!rawMaterialType) {
+                    throw new ApiError(
+                        404,
+                        "Raw material type not found for the given partySubType"
+                    );
+                }
+            } else {
+                const labourProcessType =
+                    await LabourProcessType.findById(partySubType);
+                if (!labourProcessType) {
+                    throw new ApiError(
+                        404,
+                        "Labour process type not found for the given partySubType"
+                    );
+                }
             }
         }
 
@@ -75,8 +81,23 @@ export const getAllParties = asyncHandler(
         const search = (req.query.search as string) || "";
         const sortBy = (req.query.sortBy as string) || "createdAt";
         const sortOrder = (req.query.sortOrder as string) === "asc" ? 1 : -1;
+        const partyType = req.query.partyType as string;
 
         const filter: Record<string, unknown> = { isDeleted: false };
+
+        // Filter by partyType if provided
+        if (partyType) {
+            if (VALID_PARTY_TYPES.includes(partyType)) {
+                filter.partyType = partyType;
+            } else if (partyType === "RAW_MATERIAL") {
+                // For raw material costing: show RAW_MATERIAL_DEALER + COMPLETE_SUPPLY
+                filter.partyType = { $in: ["RAW_MATERIAL_DEALER", "COMPLETE_SUPPLY"] };
+            } else if (partyType === "LABOUR") {
+                // For labour costing: show LABOUR_JOB_WORKER + COMPLETE_SUPPLY
+                filter.partyType = { $in: ["LABOUR_JOB_WORKER", "COMPLETE_SUPPLY"] };
+            }
+        }
+
         if (search) {
             filter.$or = [
                 { acName: { $regex: search, $options: "i" } },
@@ -96,6 +117,9 @@ export const getAllParties = asyncHandler(
         // Populate partySubType based on each party's partyType
         const populatedParties = await Promise.all(
             parties.map(async party => {
+                if (party.partyType === "COMPLETE_SUPPLY" || !party.partySubType) {
+                    return party;
+                }
                 const modelName = getPopulateModel(party.partyType);
                 return Party.populate(party, {
                     path: "partySubType",
@@ -133,11 +157,13 @@ export const getParty = asyncHandler(
             throw new ApiError(404, "Party not found");
         }
 
-        const modelName = getPopulateModel(party.partyType);
-        await Party.populate(party, {
-            path: "partySubType",
-            model: modelName,
-        });
+        if (party.partyType !== "COMPLETE_SUPPLY" && party.partySubType) {
+            const modelName = getPopulateModel(party.partyType);
+            await Party.populate(party, {
+                path: "partySubType",
+                model: modelName,
+            });
+        }
 
         res.status(200).json(
             new ApiResponse(200, party, "Party fetched successfully !")
@@ -166,19 +192,14 @@ export const updateParty = asyncHandler(
         const partyType = req.body.partyType || party.partyType;
         const partySubType = req.body.partySubType || party.partySubType;
 
-        if (
-            req.body.partyType &&
-            !["RAW_MATERIAL_DEALER", "LABOUR_JOB_WORKER"].includes(
-                req.body.partyType
-            )
-        ) {
+        if (req.body.partyType && !VALID_PARTY_TYPES.includes(req.body.partyType)) {
             throw new ApiError(
                 400,
-                "Party type must be either RAW_MATERIAL_DEALER or LABOUR_JOB_WORKER"
+                "Party type must be RAW_MATERIAL_DEALER, LABOUR_JOB_WORKER, or COMPLETE_SUPPLY"
             );
         }
 
-        if (req.body.partySubType) {
+        if (partyType !== "COMPLETE_SUPPLY" && req.body.partySubType) {
             if (!mongoose.Types.ObjectId.isValid(req.body.partySubType)) {
                 throw new ApiError(400, "Invalid party sub type ID");
             }
@@ -193,7 +214,7 @@ export const updateParty = asyncHandler(
                         "Raw material type not found for the given partySubType"
                     );
                 }
-            } else {
+            } else if (partyType === "LABOUR_JOB_WORKER") {
                 const labourProcessType =
                     await LabourProcessType.findById(partySubType);
                 if (!labourProcessType) {
@@ -335,28 +356,25 @@ export const importPartiesFromExcel = asyncHandler(
                     continue;
                 }
 
-                if (
-                    !["RAW_MATERIAL_DEALER", "LABOUR_JOB_WORKER"].includes(
-                        partyData.partyType
-                    )
-                ) {
+                if (!VALID_PARTY_TYPES.includes(partyData.partyType)) {
                     errors.push({
                         row: rowIndex,
                         message:
-                            "partyType must be RAW_MATERIAL_DEALER or LABOUR_JOB_WORKER",
+                            "partyType must be RAW_MATERIAL_DEALER, LABOUR_JOB_WORKER, or COMPLETE_SUPPLY",
                     });
                     continue;
                 }
 
-                if (!partyData.partySubType) {
+                if (partyData.partyType !== "COMPLETE_SUPPLY" && !partyData.partySubType) {
                     errors.push({
                         row: rowIndex,
-                        message: "partySubType is required",
+                        message: "partySubType is required for this party type",
                     });
                     continue;
                 }
 
                 if (
+                    partyData.partySubType &&
                     !mongoose.Types.ObjectId.isValid(partyData.partySubType)
                 ) {
                     errors.push({

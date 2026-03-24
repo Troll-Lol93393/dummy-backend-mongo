@@ -117,16 +117,30 @@ export const updateRfqItem = asyncHandler(async (req: Request, res: Response, ne
 
     if (itemTechSpecs) {
         const existingTech = rfqItem.itemTechSpecs as ItemTechSpecs | null;
+
+        // Sanitize hardness entries — strip _id so Mongoose generates fresh ones
+        const sanitizedHardness = Array.isArray(itemTechSpecs.hardness)
+            ? itemTechSpecs.hardness.map((h: any) => ({
+                  hardnessType: h.hardnessType,
+                  value: h.value,
+                  measurement: h.measurement,
+              }))
+            : undefined;
+
         if (existingTech && existingTech.material !== undefined) {
             // Existing doc found via populate — update it
+            const updateFields: Record<string, unknown> = {
+                material: itemTechSpecs.material,
+                diameter: itemTechSpecs.diameter,
+                length: itemTechSpecs.length,
+                weight: itemTechSpecs.weight,
+                grade: itemTechSpecs.grade,
+            };
+            if (sanitizedHardness !== undefined) {
+                updateFields.hardness = sanitizedHardness;
+            }
             await ItemTechSpecs.findByIdAndUpdate((existingTech as any)._id, {
-                $set: {
-                    material: itemTechSpecs.material,
-                    diameter: itemTechSpecs.diameter,
-                    length: itemTechSpecs.length,
-                    weight: itemTechSpecs.weight,
-                    grade: itemTechSpecs.grade,
-                },
+                $set: updateFields,
             });
         } else {
             const newTechSpecs = await ItemTechSpecs.create({
@@ -135,6 +149,7 @@ export const updateRfqItem = asyncHandler(async (req: Request, res: Response, ne
                 length: itemTechSpecs.length ?? "",
                 weight: itemTechSpecs.weight ?? "",
                 grade: itemTechSpecs.grade ?? "",
+                hardness: sanitizedHardness ?? [],
             });
             rfqItem.itemTechSpecs = newTechSpecs._id as unknown as ItemTechSpecs;
         }

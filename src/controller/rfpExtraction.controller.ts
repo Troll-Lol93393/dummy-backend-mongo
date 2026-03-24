@@ -145,6 +145,7 @@ export const confirmAndSave = asyncHandler(
 
             // Create RFQ line item
             const rfqItem = await RFQItems.create({
+                serialNumber: rawItem.serialNumber || "",
                 item: item._id,
                 quantity: rawItem.quantity || 1,
                 drawingNumber: rawItem.drawingNumber || "",

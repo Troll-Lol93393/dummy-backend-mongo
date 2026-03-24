@@ -3,6 +3,7 @@ import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/apiResponse";
 import { RFQ } from "../models/rfq.models";
+import { Costing } from "../models/costing.model";
 
 export const createRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { prNumber, startDate, dueDate, ownerName, companyName, items, location } = req.body;
@@ -41,7 +42,19 @@ export const getRFQs = asyncHandler(async (req: Request, res: Response, next: Ne
     const sortBy = (req.query.sortBy as string) || "createdAt";
     const sortOrder = (req.query.sortOrder as string) === "asc" ? 1 : -1;
 
+    const isQuoted = req.query.isQuoted as string;
+    const isRevised = req.query.isRevised as string;
+    const isRegret = req.query.isRegret as string;
+
     const filter: Record<string, unknown> = { isDeleted: false };
+    if (isQuoted === "true") filter.isQuoted = true;
+    else if (isQuoted === "false") {
+        filter.isQuoted = false;
+        filter.isRegret = { $ne: true }; // Exclude regret RFQs from pending
+    }
+    if (isRevised === "true") filter.isRevised = true;
+    if (isRegret === "true") filter.isRegret = true;
+
     if (search) {
         filter.$or = [
             { prNumber: { $regex: search, $options: "i" } },
@@ -53,13 +66,33 @@ export const getRFQs = asyncHandler(async (req: Request, res: Response, next: Ne
 
     const totalCount = await RFQ.countDocuments(filter);
     const rfqs = await RFQ.find(filter)
+        .populate("items", "_id")
         .sort({ [sortBy]: sortOrder })
         .skip((page - 1) * size)
-        .limit(size);
+        .limit(size)
+        .lean();
+
+    // Attach quotedItemCount to each RFQ
+    const rfqIds = rfqs.map(r => r._id);
+    const costings = await Costing.find({
+        rfq: { $in: rfqIds },
+        isDeleted: false,
+    }).select("rfq rfqItem").lean();
+
+    const costingCountByRfq = new Map<string, number>();
+    for (const c of costings) {
+        const key = String(c.rfq);
+        costingCountByRfq.set(key, (costingCountByRfq.get(key) ?? 0) + 1);
+    }
+
+    const enriched = rfqs.map(r => ({
+        ...r,
+        quotedItemCount: costingCountByRfq.get(String(r._id)) ?? 0,
+    }));
 
     res.status(200).json(
         new ApiResponse(200, {
-            data: rfqs,
+            data: enriched,
             totalCount,
             page,
             size,
@@ -108,6 +141,59 @@ export const updateRFQ = asyncHandler(async (req: Request, res: Response, next: 
     await rfq.save();
 
     res.status(200).json(new ApiResponse(200, rfq, "RFQ updated successfully"));
+});
+
+export const markAsQuoted = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqId } = req.params;
+
+    const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false });
+    if (!rfq) {
+        throw new ApiError(404, "RFQ not found");
+    }
+
+    // Check that at least 1 item has costing
+    const costingCount = await Costing.countDocuments({ rfq: rfq._id, isDeleted: false });
+    if (costingCount === 0) {
+        throw new ApiError(400, "Cannot mark as quoted — at least one item must have costing. Use 'Mark as Regret' instead.");
+    }
+
+    if (!rfq.isQuoted) {
+        // First time quoting — assign quotation number
+        const lastQuoted = await RFQ.findOne({ quotationNumber: { $exists: true, $ne: null } })
+            .sort({ quotationNumber: -1 })
+            .select("quotationNumber")
+            .lean();
+        const nextNumber = ((lastQuoted as { quotationNumber?: number })?.quotationNumber ?? 0) + 1;
+
+        rfq.isQuoted = true;
+        rfq.quotedOn = new Date();
+        rfq.quotationNumber = nextNumber;
+    } else {
+        // Already quoted — mark as revised
+        rfq.isRevised = true;
+        rfq.revisionDate = new Date();
+        rfq.quotedOn = new Date();
+    }
+
+    await rfq.save();
+
+    res.status(200).json(new ApiResponse(200, rfq, "RFQ marked as quoted successfully"));
+});
+
+export const markAsRegret = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqId } = req.params;
+
+    const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false });
+    if (!rfq) {
+        throw new ApiError(404, "RFQ not found");
+    }
+
+    rfq.isRegret = true;
+    rfq.regretDate = new Date();
+
+    await rfq.save();
+
+    res.status(200).json(new ApiResponse(200, rfq, "RFQ marked as regret successfully"));
 });
 
 export const deleteRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {

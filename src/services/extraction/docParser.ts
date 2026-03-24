@@ -13,6 +13,7 @@ export interface ParsedRfpData {
 }
 
 export interface ParsedItem {
+    serialNumber: string;
     itemCode: string;
     itemName: string;
     itemDesc: string;
@@ -144,6 +145,9 @@ function extractItemsFromText(rawText: string, filenameItemDesc: string): Parsed
     // Extract item codes: 18-digit numbers like 000000002100112312 → take "2100112312"
     const itemCodes = extract2100ItemCodes(rawText);
 
+    // Extract serial numbers (e.g. "7.3", "7.4") that appear near item entries
+    const serialNumbers = extractSerialNumbers(rawText, itemCodes);
+
     const quantityPattern = /(?:Qty|Quantity|Nos|Numbers?)[:\s]*(\d+(?:\.\d+)?)/gi;
     const uomPattern = /(?:UOM|Unit)[:\s]*([A-Za-z]+)/gi;
     const materialPattern = /(?:MOC|Material|Material\s*of\s*Construction)[:\s]*([^\n\r,]+)/gi;
@@ -165,6 +169,7 @@ function extractItemsFromText(rawText: string, filenameItemDesc: string): Parsed
     if (itemCodes.length > 0) {
         for (let i = 0; i < itemCodes.length; i++) {
             items.push(buildParsedItem({
+                serialNumber: serialNumbers[i] ?? "",
                 itemCode: itemCodes[i] ?? "",
                 quantity: quantities[i] ? parseFloat(quantities[i] ?? "0") : 0,
                 uom: uoms[i] ?? "",
@@ -179,6 +184,7 @@ function extractItemsFromText(rawText: string, filenameItemDesc: string): Parsed
     } else if (filenameItemDesc) {
         // No 2100 item codes found — build item from filename description
         items.push(buildParsedItem({
+            serialNumber: serialNumbers[0] ?? "",
             itemCode: generateItemCodeFromDesc(filenameItemDesc),
             quantity: quantities[0] ? parseFloat(quantities[0] ?? "0") : 0,
             uom: uoms[0] ?? "",
@@ -195,6 +201,7 @@ function extractItemsFromText(rawText: string, filenameItemDesc: string): Parsed
 }
 
 function buildParsedItem(data: {
+    serialNumber: string;
     itemCode: string;
     quantity: number;
     uom: string;
@@ -206,6 +213,7 @@ function buildParsedItem(data: {
     itemDesc: string;
 }): ParsedItem {
     return {
+        serialNumber: data.serialNumber,
         itemCode: data.itemCode,
         itemName: data.itemDesc.replace(/,/g, " ").trim(),
         itemDesc: data.itemDesc,
@@ -224,6 +232,51 @@ function buildParsedItem(data: {
             grade: "",
         },
     };
+}
+
+// Extract serial numbers like "7.3", "7.4" that appear near item codes in the document
+// These are typically section/subsection numbers preceding each line item
+function extractSerialNumbers(rawText: string, itemCodes: string[]): string[] {
+    const serials: string[] = [];
+
+    // Strategy 1: Find serial numbers near each item code in the text
+    for (const code of itemCodes) {
+        const codeIdx = rawText.indexOf(code);
+        if (codeIdx === -1) {
+            // Try finding the 18-digit version
+            const searchWindow = rawText;
+            const eighteenDigitPattern = new RegExp(`\\d*${code}\\d*`, "g");
+            const match = eighteenDigitPattern.exec(searchWindow);
+            if (match) {
+                const beforeText = rawText.substring(Math.max(0, match.index - 200), match.index);
+                const serialMatch = beforeText.match(/(\d+\.\d+(?:\.\d+)?)\s*$/);
+                if (serialMatch) {
+                    serials.push(serialMatch[1] ?? "");
+                    continue;
+                }
+            }
+            serials.push("");
+            continue;
+        }
+
+        // Look in the 200 chars before the item code for a serial number pattern
+        const beforeText = rawText.substring(Math.max(0, codeIdx - 200), codeIdx);
+        // Match patterns like "7.3", "7.4", "7.3.1" — the last one closest to the item code
+        const serialMatch = beforeText.match(/(\d+\.\d+(?:\.\d+)?)\s*$/);
+        if (serialMatch) {
+            serials.push(serialMatch[1] ?? "");
+        } else {
+            // Try broader search — find any "X.Y" pattern in the preceding text
+            const allSerials = [...beforeText.matchAll(/\b(\d+\.\d+(?:\.\d+)?)\b/g)];
+            if (allSerials.length > 0) {
+                serials.push(allSerials[allSerials.length - 1]?.[1] ?? "");
+            } else {
+                serials.push("");
+            }
+        }
+    }
+
+    return serials;
 }
 
 // Extract item codes from 18-digit numbers containing "2100"

@@ -68,6 +68,7 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
             errors: err.errors || [],
         });
     }
+    console.error("Unhandled error:", err);
     return res.status(500).json({
         success: false,
         message: "Internal Server Error",

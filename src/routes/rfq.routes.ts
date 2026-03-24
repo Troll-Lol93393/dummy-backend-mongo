@@ -5,6 +5,8 @@ import {
     getRFQ,
     updateRFQ,
     deleteRFQ,
+    markAsQuoted,
+    markAsRegret,
 } from "../controller/rfq.controller";
 import { upload } from "../middlewares/multer.middleware";
 import { verifyJWT } from "../middlewares/auth.middleware";
@@ -37,4 +39,6 @@ rfqRoutes.post("/uploadFile", verifyJWT,
 
 // User can update/delete their own RFQs
 rfqRoutes.put("/:rfqId", verifyJWT, updateRFQ);
+rfqRoutes.patch("/:rfqId/mark-quoted", verifyJWT, markAsQuoted);
+rfqRoutes.patch("/:rfqId/mark-regret", verifyJWT, markAsRegret);
 rfqRoutes.delete("/:rfqId", verifyJWT, deleteRFQ);

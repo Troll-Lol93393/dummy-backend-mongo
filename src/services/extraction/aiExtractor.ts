@@ -22,6 +22,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation, n
     "companyName": "string - vendor/company name",
     "items": [
         {
+            "serialNumber": "string - the section/serial number from the document (e.g. '7.3', '7.4', '7.3.1'). Look for dot-notation numbers that label each line item in the document",
             "itemCode": "string - 10-digit code starting with 2100 extracted from the 18-digit number in the document",
             "itemName": "string - short item name",
             "itemDesc": "string - full item description",
@@ -174,6 +175,7 @@ function normalizeAIResponse(parsed: Record<string, unknown>, rawText: string): 
         const item = rawItem as Record<string, unknown>;
         const tech = (item.technical || {}) as Record<string, unknown>;
         items.push({
+            serialNumber: String(item.serialNumber || ""),
             itemCode: String(item.itemCode || ""),
             itemName: String(item.itemName || ""),
             itemDesc: String(item.itemDesc || ""),

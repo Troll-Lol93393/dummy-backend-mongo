@@ -8,11 +8,12 @@ export interface ILabourEntry {
     cost: number;
 }
 
-export interface ICosting {
-    rfqItem: mongoose.Types.ObjectId;
-    rfq: mongoose.Types.ObjectId;
+export interface ICostingPart {
+    partName: string;
+    quantity: number;
+    supplyType: "MANUAL" | "COMPLETE_SUPPLY";
 
-    // Raw material
+    // Manual costing fields
     diameter: number;
     length: number;
     density: number;
@@ -20,15 +21,30 @@ export interface ICosting {
     materialRate: number;
     rawMaterialParty?: mongoose.Types.ObjectId;
     rawMaterialCost: number;
-
-    // Labour
     labourEntries: ILabourEntry[];
     totalLabourCost: number;
 
-    // Pricing
+    // Complete supply fields
+    completeSupplyRate: number;
+    completeSupplyParty?: mongoose.Types.ObjectId;
+    completeSupplyDate?: Date;
+
+    // Part-level pricing
     costPrice: number;
     profitMargin: number;
     profitAmount: number;
+    partTotal: number;
+}
+
+export interface ICosting {
+    rfqItem: mongoose.Types.ObjectId;
+    rfq: mongoose.Types.ObjectId;
+
+    // Parts
+    parts: ICostingPart[];
+
+    // Aggregated totals
+    totalPartsCost: number;
     packingCost: number;
     shippingCost: number;
     otherCosts: number;
@@ -67,6 +83,46 @@ const labourEntrySchema = new Schema<ILabourEntry>(
     { _id: true }
 );
 
+const costingPartSchema = new Schema<ICostingPart>(
+    {
+        partName: { type: String, trim: true, required: true },
+        quantity: { type: Number, default: 1, min: 1 },
+        supplyType: {
+            type: String,
+            enum: ["MANUAL", "COMPLETE_SUPPLY"],
+            default: "MANUAL",
+        },
+
+        // Manual costing
+        diameter: { type: Number, default: 0 },
+        length: { type: Number, default: 0 },
+        density: { type: Number, default: 7.85 },
+        weight: { type: Number, default: 0 },
+        materialRate: { type: Number, default: 0 },
+        rawMaterialParty: {
+            type: Schema.Types.ObjectId,
+            ref: "Party",
+        },
+        rawMaterialCost: { type: Number, default: 0 },
+        labourEntries: [labourEntrySchema],
+        totalLabourCost: { type: Number, default: 0 },
+
+        // Complete supply
+        completeSupplyRate: { type: Number, default: 0 },
+        completeSupplyParty: {
+            type: Schema.Types.ObjectId,
+            ref: "Party",
+        },
+        completeSupplyDate: { type: Date },
+
+        costPrice: { type: Number, default: 0 },
+        profitMargin: { type: Number, default: 0 },
+        profitAmount: { type: Number, default: 0 },
+        partTotal: { type: Number, default: 0 },
+    },
+    { _id: true }
+);
+
 const costingSchema = new Schema<ICosting>(
     {
         rfqItem: {
@@ -81,26 +137,16 @@ const costingSchema = new Schema<ICosting>(
             required: true,
             index: true,
         },
-        diameter: { type: Number, default: 0 },
-        length: { type: Number, default: 0 },
-        density: { type: Number, default: 7.85 },
-        weight: { type: Number, default: 0 },
-        materialRate: { type: Number, default: 0 },
-        rawMaterialParty: {
-            type: Schema.Types.ObjectId,
-            ref: "Party",
-        },
-        rawMaterialCost: { type: Number, default: 0 },
-        labourEntries: [labourEntrySchema],
-        totalLabourCost: { type: Number, default: 0 },
-        costPrice: { type: Number, default: 0 },
-        profitMargin: { type: Number, default: 0 },
-        profitAmount: { type: Number, default: 0 },
+
+        parts: [costingPartSchema],
+
+        totalPartsCost: { type: Number, default: 0 },
         packingCost: { type: Number, default: 0 },
         shippingCost: { type: Number, default: 0 },
         otherCosts: { type: Number, default: 0 },
         sellingPrice: { type: Number, default: 0 },
         totalCost: { type: Number, default: 0 },
+
         isDeleted: {
             type: Boolean,
             default: false,

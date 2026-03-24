@@ -10,6 +10,11 @@ export interface IRfq {
     location: string;
     isQuoted: boolean;
     quotedOn?: Date;
+    quotationNumber?: number;
+    isRevised: boolean;
+    revisionDate?: Date;
+    isRegret: boolean;
+    regretDate?: Date;
     status: "PENDING_SELECTION" | "AWARDED" | "COMPLETED" | "PREVIEW" | "ACCEPTING_RESPONSE";
     deliveryWeeks: number;
     items: RFQItems[];
@@ -24,8 +29,6 @@ export const rfqSchema: Schema<IRfq> = new Schema(
             type: String,
             required: [true, "PR number is required !"],
             trim: true,
-            unique: true,
-            index: true,
         },
         startDate: {
             type: Date,
@@ -70,6 +73,25 @@ export const rfqSchema: Schema<IRfq> = new Schema(
                 message: "Quoted date is required when PR is quoted",
             },
         },
+        quotationNumber: {
+            type: Number,
+            unique: true,
+            sparse: true,
+        },
+        isRevised: {
+            type: Boolean,
+            default: false,
+        },
+        revisionDate: {
+            type: Date,
+        },
+        isRegret: {
+            type: Boolean,
+            default: false,
+        },
+        regretDate: {
+            type: Date,
+        },
         status: {
             type: String,
             enum: ["PENDING_SELECTION", "AWARDED", "COMPLETED", "PREVIEW", "ACCEPTING_RESPONSE"],
@@ -96,5 +118,8 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         timestamps: true,
     }
 );
+
+// Unique PR number only among non-deleted RFQs (allows re-adding after soft delete)
+rfqSchema.index({ prNumber: 1 }, { unique: true, partialFilterExpression: { isDeleted: false } });
 
 export const RFQ = mongoose.model<IRfq>("RFQ", rfqSchema);

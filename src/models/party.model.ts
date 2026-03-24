@@ -22,8 +22,8 @@ export interface IParty {
     state?: string;
     statecd?: string;
     gstin?: string;
-    partyType: "RAW_MATERIAL_DEALER" | "LABOUR_JOB_WORKER";
-    partySubType: mongoose.Types.ObjectId;
+    partyType: "RAW_MATERIAL_DEALER" | "LABOUR_JOB_WORKER" | "COMPLETE_SUPPLY";
+    partySubType?: mongoose.Types.ObjectId;
     isDeleted?: boolean;
 }
 
@@ -116,11 +116,17 @@ export const partySchema: Schema<IParty> = new Schema(
         partyType: {
             type: String,
             required: [true, "Party type is required"],
-            enum: ["RAW_MATERIAL_DEALER", "LABOUR_JOB_WORKER"],
+            enum: ["RAW_MATERIAL_DEALER", "LABOUR_JOB_WORKER", "COMPLETE_SUPPLY"],
+            index: true,
         },
         partySubType: {
             type: Schema.Types.ObjectId,
-            required: [true, "Party sub type is required"],
+            required: [
+                function (this: IParty) {
+                    return this.partyType !== "COMPLETE_SUPPLY";
+                },
+                "Party sub type is required for RAW_MATERIAL_DEALER and LABOUR_JOB_WORKER",
+            ],
         },
         isDeleted: {
             type: Boolean,

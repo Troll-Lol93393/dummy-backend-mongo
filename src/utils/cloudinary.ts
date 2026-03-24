@@ -12,13 +12,24 @@ export const uploadFileToCloudinary = async (localFilePath: string) => {
         if (!localFilePath) return null;
         const response = await cloudinary.uploader.upload(localFilePath, {
             resource_type: "auto",
+            timeout: 60000,
         });
         return response;
     } catch (error: unknown) {
-        if (fs.existsSync(localFilePath)) {
-            fs.unlinkSync(localFilePath);
-        }
         console.error("Cloudinary upload error:", error);
-        return null;
+        // Retry once on timeout/5xx
+        try {
+            const response = await cloudinary.uploader.upload(localFilePath, {
+                resource_type: "auto",
+                timeout: 60000,
+            });
+            return response;
+        } catch (retryError: unknown) {
+            if (fs.existsSync(localFilePath)) {
+                fs.unlinkSync(localFilePath);
+            }
+            console.error("Cloudinary retry also failed:", retryError);
+            return null;
+        }
     }
 };

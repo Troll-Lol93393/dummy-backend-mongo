@@ -4,6 +4,7 @@ import { ItemTechSpecs } from "./item.techSpecs.model";
 import { Items } from "./item.model";
 
 export interface RFQItems {
+    serialNumber: string;
     item: Items;
     quantity: number;
     drawingNumber: string;
@@ -15,10 +16,14 @@ export interface RFQItems {
 
 export const RfqItemsSchema: Schema<RFQItems> = new Schema(
     {
+        serialNumber: {
+            type: String,
+            trim: true,
+            default: "",
+        },
         item: {
             type: Schema.Types.ObjectId,
             ref: "Item",
-            default: {},
             required: [true, "Item is required"],
         },
         drawingNumber: {
@@ -37,12 +42,10 @@ export const RfqItemsSchema: Schema<RFQItems> = new Schema(
         itemTechSpecs: {
             type: Schema.Types.ObjectId,
             ref: "ItemTechSpecs",
-            default: {},
         },
         commercialSpecs: {
             type: Schema.Types.ObjectId,
             ref: "CommercialSpecs",
-            default: {},
         },
         isDeleted: {
             type: Boolean,

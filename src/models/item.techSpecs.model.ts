@@ -1,5 +1,11 @@
 import mongoose, { Schema } from "mongoose";
 
+export interface IHardness {
+    hardnessType: string;
+    value: string;
+    measurement: string;
+}
+
 export interface ItemTechSpecs {
     material: string;
     diameter?: string;
@@ -12,7 +18,26 @@ export interface ItemTechSpecs {
     threadType?: string;
     threadPitch?: string;
     grade?: string;
+    hardness?: IHardness[];
 }
+
+const hardnessSchema = new Schema<IHardness>(
+    {
+        hardnessType: {
+            type: String,
+            trim: true,
+        },
+        value: {
+            type: String,
+            trim: true,
+        },
+        measurement: {
+            type: String,
+            trim: true,
+        },
+    },
+    { _id: true }
+);
 
 export const itemTechSpecsSchema: Schema<ItemTechSpecs> = new Schema(
     {
@@ -59,6 +84,10 @@ export const itemTechSpecsSchema: Schema<ItemTechSpecs> = new Schema(
         grade: {
             type: String,
             trim: true,
+        },
+        hardness: {
+            type: [hardnessSchema],
+            default: [],
         },
     },
     {
