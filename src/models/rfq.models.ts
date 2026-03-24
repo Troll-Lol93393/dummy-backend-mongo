@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import { RFQItems } from "./rfqItems.model";
 import { ITechnicalOffer } from "./technicalOffer.model";
+import { ICommercialOffer } from "./commercialOffer.model";
 
 export interface IRfq {
     prNumber: string;
@@ -20,6 +21,7 @@ export interface IRfq {
     deliveryWeeks: number;
     items: RFQItems[];
     activeTechnicalOffer?: ITechnicalOffer;
+    activeCommercialOffer?: ICommercialOffer;
     isDeleted: boolean;
     createdBy: string;
     updatedBy: string;
@@ -113,6 +115,10 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         activeTechnicalOffer: {
             type: Schema.Types.ObjectId,
             ref: "TechnicalOffer",
+        },
+        activeCommercialOffer: {
+            type: Schema.Types.ObjectId,
+            ref: "CommercialOffer",
         },
         isDeleted: {
             type: Boolean,

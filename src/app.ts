@@ -33,6 +33,7 @@ import { masterRoutes } from "./routes/master.routes";
 import { partyRoutes } from "./routes/party.routes";
 import { costingRoutes } from "./routes/costing.routes";
 import { technicalOfferRoutes } from "./routes/technicalOffer.routes";
+import { commercialOfferRoutes } from "./routes/commercialOffer.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -43,6 +44,7 @@ app.use("/api/v1/master", masterRoutes);
 app.use("/api/v1/party", partyRoutes);
 app.use("/api/v1/costing", costingRoutes);
 app.use("/api/v1/technical-offer", technicalOfferRoutes);
+app.use("/api/v1/commercial-offer", commercialOfferRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
