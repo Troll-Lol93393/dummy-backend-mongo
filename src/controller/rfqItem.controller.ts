@@ -135,6 +135,7 @@ export const updateRfqItem = asyncHandler(async (req: Request, res: Response, ne
                 length: itemTechSpecs.length,
                 weight: itemTechSpecs.weight,
                 grade: itemTechSpecs.grade,
+                remarks: itemTechSpecs.remarks,
             };
             if (sanitizedHardness !== undefined) {
                 updateFields.hardness = sanitizedHardness;
@@ -149,6 +150,7 @@ export const updateRfqItem = asyncHandler(async (req: Request, res: Response, ne
                 length: itemTechSpecs.length ?? "",
                 weight: itemTechSpecs.weight ?? "",
                 grade: itemTechSpecs.grade ?? "",
+                remarks: itemTechSpecs.remarks ?? "",
                 hardness: sanitizedHardness ?? [],
             });
             rfqItem.itemTechSpecs = newTechSpecs._id as unknown as ItemTechSpecs;

@@ -32,6 +32,7 @@ import { rfpExtractionRoutes } from "./routes/rfpExtraction.routes";
 import { masterRoutes } from "./routes/master.routes";
 import { partyRoutes } from "./routes/party.routes";
 import { costingRoutes } from "./routes/costing.routes";
+import { technicalOfferRoutes } from "./routes/technicalOffer.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -41,6 +42,7 @@ app.use("/api/v1/rfp-extract", rfpExtractionRoutes);
 app.use("/api/v1/master", masterRoutes);
 app.use("/api/v1/party", partyRoutes);
 app.use("/api/v1/costing", costingRoutes);
+app.use("/api/v1/technical-offer", technicalOfferRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {

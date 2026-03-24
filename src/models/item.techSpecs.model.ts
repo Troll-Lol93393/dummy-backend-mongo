@@ -18,6 +18,7 @@ export interface ItemTechSpecs {
     threadType?: string;
     threadPitch?: string;
     grade?: string;
+    remarks?: string;
     hardness?: IHardness[];
 }
 
@@ -82,6 +83,10 @@ export const itemTechSpecsSchema: Schema<ItemTechSpecs> = new Schema(
             trim: true,
         },
         grade: {
+            type: String,
+            trim: true,
+        },
+        remarks: {
             type: String,
             trim: true,
         },

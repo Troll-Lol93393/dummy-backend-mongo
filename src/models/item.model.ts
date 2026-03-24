@@ -14,6 +14,7 @@ export interface IBomEntry {
     diameter?: string;
     length?: string;
     weight?: string;
+    density?: string;
     grade?: string;
     make?: string;
     remarks?: string;
@@ -64,6 +65,7 @@ const bomEntrySchema = new Schema<IBomEntry>(
         diameter: { type: String, trim: true },
         length: { type: String, trim: true },
         weight: { type: String, trim: true },
+        density: { type: String, trim: true, default: "7.85" },
         grade: { type: String, trim: true },
         make: { type: String, trim: true },
         remarks: { type: String, trim: true },
