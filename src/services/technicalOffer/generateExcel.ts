@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { CompanyInfo } from "../shared/companyInfo";
 
 interface HardnessEntry {
     hardnessType: string;
@@ -57,7 +58,10 @@ const BORDER_COLOR = "BDC3C7";
 type BorderStyle = "thin" | "medium";
 
 function thinBorder(): Partial<ExcelJS.Borders> {
-    const side: Partial<ExcelJS.Border> = { style: "thin" as BorderStyle, color: { argb: BORDER_COLOR } };
+    const side: Partial<ExcelJS.Border> = {
+        style: "thin" as BorderStyle,
+        color: { argb: BORDER_COLOR },
+    };
     return { top: side, bottom: side, left: side, right: side };
 }
 
@@ -66,9 +70,12 @@ function formatHardness(entries: HardnessEntry[]): string {
     return entries.map(h => `${h.hardnessType}: ${h.value} ${h.measurement}`).join("; ");
 }
 
-export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffer> {
+export async function generateTechOfferExcel(
+    data: TechOfferData,
+    company: CompanyInfo
+): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Sheth Engineering";
+    wb.creator = company.name;
     wb.created = new Date();
 
     const ws = wb.addWorksheet("Technical Offer", {
@@ -77,14 +84,14 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
 
     // Column widths
     ws.columns = [
-        { width: 10 }, // A — Sl No
-        { width: 16 }, // B — Item Code
-        { width: 28 }, // C — Item Name
-        { width: 16 }, // D — Drawing No
-        { width: 22 }, // E — MOC & Grade
-        { width: 30 }, // F — Hardness
-        { width: 8 },  // G — Qty
-        { width: 24 }, // H — Remarks
+        { width: 8 }, // A — Sl No
+        { width: 14 }, // B — Item Code
+        { width: 24 }, // C — Item Name
+        { width: 14 }, // D — Drawing No
+        { width: 20 }, // E — MOC & Grade
+        { width: 26 }, // F — Hardness
+        { width: 8 }, // G — Qty
+        { width: 42 }, // H — Remarks
     ];
 
     let row = 1;
@@ -96,7 +103,7 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
     // Row 1: Company name (navy bg, white bold text)
     ws.mergeCells(`A${row}:H${row}`);
     const companyCell = ws.getCell(`A${row}`);
-    companyCell.value = "SHETH ENGINEERING";
+    companyCell.value = company.name;
     companyCell.font = { name: "Calibri", size: 18, bold: true, color: { argb: HEADER_FONT } };
     companyCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     companyCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -106,7 +113,7 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
     // Row 2: Tagline (navy bg, lighter text)
     ws.mergeCells(`A${row}:H${row}`);
     const tagCell = ws.getCell(`A${row}`);
-    tagCell.value = "Precision Engineering & Manufacturing Solutions";
+    tagCell.value = company.tagline || "";
     tagCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "8FAABE" } };
     tagCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     tagCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -122,13 +129,14 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
 
     // Row 4: Details — GSTIN | Vendor Code | Date
     ws.mergeCells(`A${row}:C${row}`);
-    ws.getCell(`A${row}`).value = "GSTIN: 24AABCS1234F1ZP";
+    ws.getCell(`A${row}`).value = "GSTIN: " + (company.gstin || "\u2014");
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 9, bold: true };
     ws.mergeCells(`D${row}:E${row}`);
-    ws.getCell(`D${row}`).value = "Vendor Code: SE-2024-001";
+    ws.getCell(`D${row}`).value = "Vendor Code: " + (company.vendorCode || "\u2014");
     ws.getCell(`D${row}`).font = { name: "Calibri", size: 9, bold: true };
     ws.mergeCells(`F${row}:H${row}`);
-    ws.getCell(`F${row}`).value = `Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
+    ws.getCell(`F${row}`).value =
+        `Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
     ws.getCell(`F${row}`).font = { name: "Calibri", size: 9, bold: true };
     ws.getCell(`F${row}`).alignment = { horizontal: "right" };
     ws.getRow(row).height = 18;
@@ -137,7 +145,9 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
     // Row 5: Address
     ws.mergeCells(`A${row}:H${row}`);
     ws.getCell(`A${row}`).value =
-        "Plot No. 123, Industrial Area, Phase-II, Ahmedabad, Gujarat — 382 445  |  Ph: +91 79 2583 XXXX";
+        [company.address, company.phone ? `Ph: ${company.phone}` : ""]
+            .filter(Boolean)
+            .join("  |  ") || "\u2014";
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 8, color: { argb: "555555" } };
     ws.getCell(`A${row}`).alignment = { horizontal: "center" };
     ws.getRow(row).height = 16;
@@ -178,7 +188,16 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
     // ══════════════════════════════════════
     // ITEMS TABLE HEADER
     // ══════════════════════════════════════
-    const tableHeaders = ["Sl No.", "Item Code", "Item Name", "Drawing No.", "MOC & Grade", "Hardness", "Qty", "Remarks"];
+    const tableHeaders = [
+        "Sl No.",
+        "Item Code",
+        "Item Name",
+        "Drawing No.",
+        "MOC & Grade",
+        "Hardness",
+        "Qty",
+        "Remarks",
+    ];
     const headerRow = ws.getRow(row);
     tableHeaders.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -241,7 +260,16 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
             row++;
 
             // BOM header: #, Part Name, Material & Grade, Qty, Hardness, Remarks
-            const bomHeaders = ["", "#", "Part Name", "Material & Grade", "Qty", "Hardness", "Remarks", ""];
+            const bomHeaders = [
+                "",
+                "#",
+                "Part Name",
+                "Material & Grade",
+                "Qty",
+                "Hardness",
+                "Remarks",
+                "",
+            ];
             const bomHeaderRow = ws.getRow(row);
             bomHeaders.forEach((h, i) => {
                 const cell = bomHeaderRow.getCell(i + 1);
@@ -260,7 +288,16 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
                 const partHardness = formatHardness(part.hardness ?? []);
                 const bomBg = pi % 2 === 0 ? "FDFEFE" : "F2F4F4";
 
-                const bomValues = ["", String(pi + 1), part.partName, matGrade, part.quantity, partHardness, part.remarks || "—", ""];
+                const bomValues = [
+                    "",
+                    String(pi + 1),
+                    part.partName,
+                    matGrade,
+                    part.quantity,
+                    partHardness,
+                    part.remarks || "—",
+                    "",
+                ];
                 const bomRow = ws.getRow(row);
                 bomValues.forEach((v, i) => {
                     const cell = bomRow.getCell(i + 1);
@@ -312,7 +349,7 @@ export async function generateTechOfferExcel(data: TechOfferData): Promise<Buffe
     row += 2;
 
     // Signatory
-    ws.getCell(`A${row}`).value = "For SHETH ENGINEERING";
+    ws.getCell(`A${row}`).value = "For " + company.name;
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 10 };
     row += 3;
 

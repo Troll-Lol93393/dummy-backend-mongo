@@ -4,8 +4,10 @@ import { ApiResponse } from "../utils/apiResponse";
 import { asyncHandler } from "../utils/asyncHandler";
 import { RFQ } from "../models/rfq.models";
 import { TechnicalOffer, ISnapshot } from "../models/technicalOffer.model";
+import { PORegister } from "../models/poRegister.model";
 import { generateTechOfferPdf } from "../services/technicalOffer/generatePdf";
 import { generateTechOfferExcel } from "../services/technicalOffer/generateExcel";
+import { getCompanyProfileForGenerators } from "./companyProfile.controller";
 
 // ── Populated-doc helper interfaces ──
 
@@ -56,48 +58,103 @@ interface PopulatedRfqItem {
 
 // ── Build snapshot from populated RFQ ──
 
-function buildSnapshotFromRfq(rfq: Record<string, unknown>): ISnapshot {
+async function buildSnapshotFromRfq(rfq: Record<string, unknown>): Promise<ISnapshot> {
     const lineItems = (rfq.items as PopulatedRfqItem[]) ?? [];
+    const validItems = lineItems.filter(li => !li.isDeleted && li.item);
 
-    const items = lineItems
-        .filter(li => !li.isDeleted && li.item)
-        .map((li, idx) => {
-            const item = li.item;
-            const techSpecs = li.itemTechSpecs;
-            const isSetOrAssembly = item.itemType === "SET" || item.itemType === "ASSEMBLY";
+    // Collect all unique item codes to batch-fetch PO history
+    const allItemCodes = [...new Set(validItems.map(li => li.item.itemCode).filter(Boolean))];
 
-            return {
-                serialNumber: li.serialNumber || String(idx + 1),
-                itemCode: item.itemCode,
-                itemName: item.itemName,
-                itemDesc: item.itemDesc,
-                itemType: item.itemType,
-                quantity: li.quantity,
-                drawingNumber: li.drawingNumber ?? "",
-                material: techSpecs?.material ?? "",
-                grade: techSpecs?.grade ?? "",
-                hardness: (techSpecs?.hardness ?? []).map(h => ({
-                    hardnessType: h.hardnessType,
-                    value: h.value,
-                    measurement: h.measurement,
-                })),
-                remarks: techSpecs?.remarks ?? "",
-                bom: isSetOrAssembly
-                    ? (item.bom ?? []).map(b => ({
-                          partName: b.partName,
-                          material: b.material ?? "",
-                          grade: b.grade ?? "",
-                          quantity: b.quantity,
-                          hardness: (b.hardness ?? []).map(h => ({
-                              hardnessType: h.hardnessType,
-                              value: h.value,
-                              measurement: h.measurement,
-                          })),
-                          remarks: b.remarks ?? "",
-                      }))
-                    : [],
-            };
-        });
+    // Fetch PO sale history for all items in one query
+    const poHistoryMap = new Map<string, { poNumber: string; poDate: Date | null }[]>();
+    if (allItemCodes.length > 0) {
+        const poRegisters = await PORegister.find({
+            "items.itemCode": { $in: allItemCodes },
+            isDeleted: false,
+        })
+            .select("poNumber poDate items.itemCode")
+            .sort({ poDate: -1 })
+            .lean();
+
+        for (const po of poRegisters) {
+            const matchedCodes = new Set(
+                po.items
+                    .map((i: { itemCode: string }) => i.itemCode)
+                    .filter((code: string) => allItemCodes.includes(code))
+            );
+            for (const code of matchedCodes) {
+                const existing = poHistoryMap.get(code) ?? [];
+                existing.push({ poNumber: po.poNumber, poDate: po.poDate ?? null });
+                poHistoryMap.set(code, existing);
+            }
+        }
+    }
+
+    const items = validItems.map((li, idx) => {
+        const item = li.item;
+        const techSpecs = li.itemTechSpecs;
+        const isSetOrAssembly = item.itemType === "SET" || item.itemType === "ASSEMBLY";
+
+        // Build auto-generated remarks
+        const remarkParts: string[] = [];
+        const userRemarks = techSpecs?.remarks ?? "";
+        if (userRemarks) {
+            remarkParts.push(userRemarks);
+        }
+
+        // Previous supply remarks (max 3 latest POs)
+        const poHistory = poHistoryMap.get(item.itemCode) ?? [];
+        if (poHistory.length > 0) {
+            const latestPOs = poHistory.slice(0, 3);
+            const poLines = latestPOs.map(po => {
+                // Use the last segment after "/" (e.g. "410022123" from "VJNR/110/410022123")
+                const segments = (po.poNumber ?? "").split("/");
+                const shortPO = segments[segments.length - 1] ?? po.poNumber;
+                return `• ${shortPO}`;
+            });
+            remarkParts.push(`Previously supplied against:\n${poLines.join("\n")}`);
+        }
+
+        // Scope of supply from BOM
+        if (isSetOrAssembly && item.bom && item.bom.length > 0) {
+            const scopeParts = item.bom.map(b => `${b.quantity} ${b.partName}`).join(" + ");
+            remarkParts.push(`Scope of supply:\n• ${scopeParts}`);
+        }
+
+        const finalRemarks = remarkParts.join("\n\n");
+
+        return {
+            serialNumber: li.serialNumber || String(idx + 1),
+            itemCode: item.itemCode,
+            itemName: item.itemName,
+            itemDesc: item.itemDesc,
+            itemType: item.itemType,
+            quantity: li.quantity,
+            drawingNumber: li.drawingNumber ?? "",
+            material: techSpecs?.material ?? "",
+            grade: techSpecs?.grade ?? "",
+            hardness: (techSpecs?.hardness ?? []).map(h => ({
+                hardnessType: h.hardnessType,
+                value: h.value,
+                measurement: h.measurement,
+            })),
+            remarks: finalRemarks,
+            bom: isSetOrAssembly
+                ? (item.bom ?? []).map(b => ({
+                      partName: b.partName,
+                      material: b.material ?? "",
+                      grade: b.grade ?? "",
+                      quantity: b.quantity,
+                      hardness: (b.hardness ?? []).map(h => ({
+                          hardnessType: h.hardnessType,
+                          value: h.value,
+                          measurement: h.measurement,
+                      })),
+                      remarks: b.remarks ?? "",
+                  }))
+                : [],
+        };
+    });
 
     return {
         prNumber: rfq.prNumber as string,
@@ -146,7 +203,7 @@ export const generateTechOffer = asyncHandler(
         );
 
         // Build snapshot
-        const snapshot = buildSnapshotFromRfq(rfq as unknown as Record<string, unknown>);
+        const snapshot = await buildSnapshotFromRfq(rfq as unknown as Record<string, unknown>);
 
         // Create new technical offer
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -233,7 +290,13 @@ export const reviewTechOffer = asyncHandler(
 
         await offer.save();
 
-        res.status(200).json(new ApiResponse(200, offer, `Technical offer ${action === "approve" ? "approved" : "revision requested"}`));
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                offer,
+                `Technical offer ${action === "approve" ? "approved" : "revision requested"}`
+            )
+        );
     }
 );
 
@@ -316,10 +379,11 @@ export const downloadTechOfferPdf = asyncHandler(
         } else {
             // Download live from current RFQ data
             const rfq = await fetchPopulatedRfq(rfqId);
-            data = buildSnapshotFromRfq(rfq as unknown as Record<string, unknown>);
+            data = await buildSnapshotFromRfq(rfq as unknown as Record<string, unknown>);
         }
 
-        const pdfStream = generateTechOfferPdf(data);
+        const company = await getCompanyProfileForGenerators();
+        const pdfStream = generateTechOfferPdf(data, company);
 
         const filename = `Technical_Offer_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`;
         res.setHeader("Content-Type", "application/pdf");
@@ -346,13 +410,17 @@ export const downloadTechOfferExcel = asyncHandler(
             data = offer.snapshot;
         } else {
             const rfq = await fetchPopulatedRfq(rfqId);
-            data = buildSnapshotFromRfq(rfq as unknown as Record<string, unknown>);
+            data = await buildSnapshotFromRfq(rfq as unknown as Record<string, unknown>);
         }
 
-        const buffer = await generateTechOfferExcel(data);
+        const company = await getCompanyProfileForGenerators();
+        const buffer = await generateTechOfferExcel(data, company);
 
         const filename = `Technical_Offer_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.xlsx`;
-        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
         res.send(buffer);

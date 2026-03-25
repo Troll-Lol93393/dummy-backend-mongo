@@ -7,6 +7,10 @@ import {
     getCurrentUser,
     updateUserProfile,
     changePassword,
+    forgotPassword,
+    verifyResetOtp,
+    resendOtp,
+    resetPassword,
 } from "../controller/user.controller";
 import { verifyJWT, verifyRoles } from "../middlewares/auth.middleware";
 import { ApiResponse } from "../utils/apiResponse";
@@ -17,6 +21,10 @@ export const userRoutes = Router();
 userRoutes.post("/register", register);
 userRoutes.post("/login", login);
 userRoutes.post("/refresh-token", refreshAccessToken);
+userRoutes.post("/forgot-password", forgotPassword);
+userRoutes.post("/verify-reset-otp", verifyResetOtp);
+userRoutes.post("/resend-otp", resendOtp);
+userRoutes.post("/reset-password", resetPassword);
 
 // Protected routes
 userRoutes.post("/logout", verifyJWT, logout);
@@ -25,12 +33,7 @@ userRoutes.patch("/profile", verifyJWT, updateUserProfile);
 userRoutes.patch("/change-password", verifyJWT, changePassword);
 
 // Admin only routes
-userRoutes.get(
-    "/admin/users",
-    verifyJWT,
-    verifyRoles("ROLE_OWNER", "ROLE_ADMIN"),
-    (req, res) => {
-        // TODO: Implement get all users functionality
-        res.json(new ApiResponse(200, [], "Get all users endpoint - TODO"));
-    }
-);
+userRoutes.get("/admin/users", verifyJWT, verifyRoles("ROLE_OWNER", "ROLE_ADMIN"), (req, res) => {
+    // TODO: Implement get all users functionality
+    res.json(new ApiResponse(200, [], "Get all users endpoint - TODO"));
+});

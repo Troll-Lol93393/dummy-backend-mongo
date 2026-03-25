@@ -7,6 +7,7 @@ import { Costing } from "../models/costing.model";
 import { CommercialOffer, ICommercialSnapshot } from "../models/commercialOffer.model";
 import { generateCommercialOfferPdf } from "../services/commercialOffer/generatePdf";
 import { generateCommercialOfferExcel } from "../services/commercialOffer/generateExcel";
+import { getCompanyProfileForGenerators } from "./companyProfile.controller";
 
 // ── Constants ──
 const HSN_CODE = "84879000";
@@ -52,7 +53,7 @@ async function buildCommercialSnapshot(rfqId: string): Promise<ICommercialSnapsh
             const sellingPrice = costing?.sellingPrice ?? 0;
             const quantity = li.quantity ?? 1;
             const totalBeforeGst = sellingPrice * quantity;
-            const gstAmount = Math.round((totalBeforeGst * GST_PERCENT) / 100 * 100) / 100;
+            const gstAmount = Math.round(((totalBeforeGst * GST_PERCENT) / 100) * 100) / 100;
             const totalWithGst = Math.round((totalBeforeGst + gstAmount) * 100) / 100;
 
             grandTotalBeforeGst += totalBeforeGst;
@@ -133,7 +134,8 @@ export const submitCommercialOffer = asyncHandler(
 
         const offer = await CommercialOffer.findById(offerId);
         if (!offer) throw new ApiError(404, "Commercial offer not found");
-        if (offer.status !== "DRAFT") throw new ApiError(400, `Cannot submit with status "${offer.status}"`);
+        if (offer.status !== "DRAFT")
+            throw new ApiError(400, `Cannot submit with status "${offer.status}"`);
 
         offer.status = "SUBMITTED";
         offer.submittedAt = new Date();
@@ -180,7 +182,13 @@ export const reviewCommercialOffer = asyncHandler(
         }
 
         await offer.save();
-        res.status(200).json(new ApiResponse(200, offer, `Commercial offer ${action === "approve" ? "approved" : "revision requested"}`));
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                offer,
+                `Commercial offer ${action === "approve" ? "approved" : "revision requested"}`
+            )
+        );
     }
 );
 
@@ -260,7 +268,8 @@ export const downloadCommercialOfferPdf = asyncHandler(
             data = await buildCommercialSnapshot(rfqId);
         }
 
-        const pdfStream = generateCommercialOfferPdf(data);
+        const company = await getCompanyProfileForGenerators();
+        const pdfStream = generateCommercialOfferPdf(data, company);
 
         const filename = `Commercial_Offer_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`;
         res.setHeader("Content-Type", "application/pdf");
@@ -289,10 +298,14 @@ export const downloadCommercialOfferExcel = asyncHandler(
             data = await buildCommercialSnapshot(rfqId);
         }
 
-        const buffer = await generateCommercialOfferExcel(data);
+        const company = await getCompanyProfileForGenerators();
+        const buffer = await generateCommercialOfferExcel(data, company);
 
         const filename = `Commercial_Offer_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.xlsx`;
-        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
         res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
 
         res.send(buffer);

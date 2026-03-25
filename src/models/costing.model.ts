@@ -8,13 +8,19 @@ export interface ILabourEntry {
     cost: number;
 }
 
+export type ShapeType = "ROUND" | "SQUARE" | "FLAT" | "HEX" | "PIPE" | "SHEET";
+
 export interface ICostingPart {
     partName: string;
     quantity: number;
     supplyType: "MANUAL" | "COMPLETE_SUPPLY";
 
     // Manual costing fields
+    shapeType: ShapeType;
     diameter: number;
+    width: number;
+    thickness: number;
+    innerDiameter: number;
     length: number;
     density: number;
     weight: number;
@@ -94,7 +100,15 @@ const costingPartSchema = new Schema<ICostingPart>(
         },
 
         // Manual costing
+        shapeType: {
+            type: String,
+            enum: ["ROUND", "SQUARE", "FLAT", "HEX", "PIPE", "SHEET"],
+            default: "ROUND",
+        },
         diameter: { type: Number, default: 0 },
+        width: { type: Number, default: 0 },
+        thickness: { type: Number, default: 0 },
+        innerDiameter: { type: Number, default: 0 },
         length: { type: Number, default: 0 },
         density: { type: Number, default: 7.85 },
         weight: { type: Number, default: 0 },

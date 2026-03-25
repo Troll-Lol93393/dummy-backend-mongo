@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { PassThrough } from "stream";
+import { CompanyInfo } from "../shared/companyInfo";
 
 interface HardnessEntry {
     hardnessType: string;
@@ -61,7 +62,12 @@ const COLORS = {
 // Helper to safely get margin values
 function m(doc: PDFKit.PDFDocument): { left: number; right: number; top: number; bottom: number } {
     const margins = doc.page.margins!;
-    return { left: margins.left!, right: margins.right!, top: margins.top!, bottom: margins.bottom! };
+    return {
+        left: margins.left!,
+        right: margins.right!,
+        top: margins.top!,
+        bottom: margins.bottom!,
+    };
 }
 
 function pw(doc: PDFKit.PDFDocument): number {
@@ -73,21 +79,21 @@ function formatHardness(entries: HardnessEntry[]): string {
     return entries.map(h => `${h.hardnessType}: ${h.value} ${h.measurement}`).join(", ");
 }
 
-export function generateTechOfferPdf(data: TechOfferData): PassThrough {
+export function generateTechOfferPdf(data: TechOfferData, company: CompanyInfo): PassThrough {
     const stream = new PassThrough();
     const doc = new PDFDocument({ margin: 50, size: "A4" });
     doc.pipe(stream);
 
-    drawLetterhead(doc, data);
+    drawLetterhead(doc, data, company);
     drawSubjectLine(doc, data);
     drawItemsTable(doc, data);
-    drawFooter(doc, data);
+    drawFooter(doc, data, company);
 
     doc.end();
     return stream;
 }
 
-function drawLetterhead(doc: PDFKit.PDFDocument, _data: TechOfferData): void {
+function drawLetterhead(doc: PDFKit.PDFDocument, _data: TechOfferData, company: CompanyInfo): void {
     const pageWidth = pw(doc);
     const leftX = m(doc).left;
 
@@ -107,13 +113,13 @@ function drawLetterhead(doc: PDFKit.PDFDocument, _data: TechOfferData): void {
     doc.font("Helvetica-Bold")
         .fontSize(24)
         .fillColor(COLORS.headerText)
-        .text("SHETH ENGINEERING", leftX + 20, headerY + 12, { width: pageWidth - 40 });
+        .text(company.name, leftX + 20, headerY + 12, { width: pageWidth - 40 });
 
     // Tagline
     doc.font("Helvetica")
         .fontSize(9)
         .fillColor("#8faabe")
-        .text("Precision Engineering & Manufacturing Solutions", leftX + 20, headerY + 42, {
+        .text(company.tagline || "", leftX + 20, headerY + 42, {
             width: pageWidth - 40,
         });
 
@@ -122,7 +128,9 @@ function drawLetterhead(doc: PDFKit.PDFDocument, _data: TechOfferData): void {
         .fontSize(7.5)
         .fillColor("#aec6d4")
         .text(
-            "Plot No. 123, Industrial Area, Phase-II, Ahmedabad, Gujarat — 382 445  |  Ph: +91 79 2583 XXXX",
+            [company.address, company.phone ? `Ph: ${company.phone}` : ""]
+                .filter(Boolean)
+                .join("  |  "),
             leftX + 20,
             headerY + 58,
             { width: pageWidth - 40 }
@@ -133,20 +141,39 @@ function drawLetterhead(doc: PDFKit.PDFDocument, _data: TechOfferData): void {
     const colW = pageWidth / 3;
 
     // GST
-    doc.font("Helvetica-Bold").fontSize(7).fillColor(COLORS.textMuted).text("GSTIN", leftX, detailY);
-    doc.font("Helvetica").fontSize(8).fillColor(COLORS.textDark).text("24AABCS1234F1ZP", leftX, detailY + 10);
+    doc.font("Helvetica-Bold")
+        .fontSize(7)
+        .fillColor(COLORS.textMuted)
+        .text("GSTIN", leftX, detailY);
+    doc.font("Helvetica")
+        .fontSize(8)
+        .fillColor(COLORS.textDark)
+        .text(company.gstin || "—", leftX, detailY + 10);
 
     // Vendor Code
-    doc.font("Helvetica-Bold").fontSize(7).fillColor(COLORS.textMuted).text("VENDOR CODE", leftX + colW, detailY);
-    doc.font("Helvetica").fontSize(8).fillColor(COLORS.textDark).text("SE-2024-001", leftX + colW, detailY + 10);
+    doc.font("Helvetica-Bold")
+        .fontSize(7)
+        .fillColor(COLORS.textMuted)
+        .text("VENDOR CODE", leftX + colW, detailY);
+    doc.font("Helvetica")
+        .fontSize(8)
+        .fillColor(COLORS.textDark)
+        .text(company.vendorCode || "—", leftX + colW, detailY + 10);
 
     // Date
-    doc.font("Helvetica-Bold").fontSize(7).fillColor(COLORS.textMuted).text("DATE", leftX + colW * 2, detailY);
+    doc.font("Helvetica-Bold")
+        .fontSize(7)
+        .fillColor(COLORS.textMuted)
+        .text("DATE", leftX + colW * 2, detailY);
     doc.font("Helvetica")
         .fontSize(8)
         .fillColor(COLORS.textDark)
         .text(
-            new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+            new Date().toLocaleDateString("en-IN", {
+                day: "2-digit",
+                month: "short",
+                year: "numeric",
+            }),
             leftX + colW * 2,
             detailY + 10
         );
@@ -193,8 +220,17 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: TechOfferData): void {
     const startX = m(doc).left;
 
     // Column widths — Qty before Remarks
-    const cols = [35, 65, 95, 55, 80, 55, 35, 75];
-    const headers = ["Sl No.", "Item Code", "Item Name", "Drg No.", "MOC & Grade", "Hardness", "Qty", "Remarks"];
+    const cols = [30, 55, 75, 45, 65, 50, 30, 145];
+    const headers = [
+        "Sl No.",
+        "Item Code",
+        "Item Name",
+        "Drg No.",
+        "MOC & Grade",
+        "Hardness",
+        "Qty",
+        "Remarks",
+    ];
 
     // Table header
     let y = doc.y;
@@ -241,7 +277,10 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: TechOfferData): void {
 
         const bgColor = idx % 2 === 0 ? COLORS.rowEven : COLORS.rowOdd;
         doc.rect(startX, y, pageWidth, rowHeight).fill(bgColor);
-        doc.rect(startX, y, pageWidth, rowHeight).strokeColor(COLORS.border).lineWidth(0.3).stroke();
+        doc.rect(startX, y, pageWidth, rowHeight)
+            .strokeColor(COLORS.border)
+            .lineWidth(0.3)
+            .stroke();
 
         xPos = startX;
         cellTexts.forEach((text, i) => {
@@ -255,10 +294,18 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: TechOfferData): void {
         // Vertical lines
         xPos = startX;
         cols.forEach(w => {
-            doc.moveTo(xPos, y).lineTo(xPos, y + rowHeight).strokeColor(COLORS.border).lineWidth(0.3).stroke();
+            doc.moveTo(xPos, y)
+                .lineTo(xPos, y + rowHeight)
+                .strokeColor(COLORS.border)
+                .lineWidth(0.3)
+                .stroke();
             xPos += w;
         });
-        doc.moveTo(xPos, y).lineTo(xPos, y + rowHeight).strokeColor(COLORS.border).lineWidth(0.3).stroke();
+        doc.moveTo(xPos, y)
+            .lineTo(xPos, y + rowHeight)
+            .strokeColor(COLORS.border)
+            .lineWidth(0.3)
+            .stroke();
 
         y += rowHeight;
         doc.y = y;
@@ -328,14 +375,20 @@ function drawBomSubTable(
 
         const bg = pi % 2 === 0 ? "#fdfefe" : "#f2f4f4";
         doc.rect(startX + 10, y, pageWidth - 20, rh).fill(bg);
-        doc.rect(startX + 10, y, pageWidth - 20, rh).strokeColor(COLORS.border).lineWidth(0.2).stroke();
+        doc.rect(startX + 10, y, pageWidth - 20, rh)
+            .strokeColor(COLORS.border)
+            .lineWidth(0.2)
+            .stroke();
 
         bx = startX + 10;
         bomTexts.forEach((t, i) => {
-            doc.font("Helvetica").fontSize(6.5).fillColor(COLORS.textDark).text(t, bx + 2, y + 3, {
-                width: bomCols[i]! - 4,
-                align: "left",
-            });
+            doc.font("Helvetica")
+                .fontSize(6.5)
+                .fillColor(COLORS.textDark)
+                .text(t, bx + 2, y + 3, {
+                    width: bomCols[i]! - 4,
+                    align: "left",
+                });
             bx += bomCols[i]!;
         });
 
@@ -346,7 +399,7 @@ function drawBomSubTable(
     doc.y += 4;
 }
 
-function drawFooter(doc: PDFKit.PDFDocument, data: TechOfferData): void {
+function drawFooter(doc: PDFKit.PDFDocument, data: TechOfferData, company: CompanyInfo): void {
     const pageWidth = pw(doc);
     const startX = m(doc).left;
 
@@ -368,7 +421,10 @@ function drawFooter(doc: PDFKit.PDFDocument, data: TechOfferData): void {
 
     // Signature section
     const sigY = y + 58;
-    doc.font("Helvetica").fontSize(9).fillColor(COLORS.textMuted).text("For SHETH ENGINEERING", startX, sigY);
+    doc.font("Helvetica")
+        .fontSize(9)
+        .fillColor(COLORS.textMuted)
+        .text("For " + company.name, startX, sigY);
 
     doc.moveTo(startX, sigY + 40)
         .lineTo(startX + 180, sigY + 40)
@@ -409,7 +465,11 @@ function calculateRowHeight(
 ): number {
     let maxH = 18;
     texts.forEach((text, i) => {
-        const h = doc.font("Helvetica").fontSize(fontSize).heightOfString(text, { width: cols[i]! - 6 }) + 8;
+        const h =
+            doc
+                .font("Helvetica")
+                .fontSize(fontSize)
+                .heightOfString(text, { width: cols[i]! - 6 }) + 8;
         if (h > maxH) maxH = h;
     });
     return maxH;

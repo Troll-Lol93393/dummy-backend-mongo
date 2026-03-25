@@ -12,6 +12,10 @@ export interface IUser {
     role: string;
     password: string;
     refreshToken: string;
+    resetOtp?: string;
+    resetOtpExpires?: Date;
+    resetPasswordToken?: string;
+    resetPasswordExpires?: Date;
     comparePassword(password: string): Promise<boolean>;
     generateAccessToken(): string;
     generateRefreshToken(): string;
@@ -63,6 +67,18 @@ export const userSchema: Schema<IUser> = new Schema<IUser>(
         },
         refreshToken: {
             type: String,
+        },
+        resetOtp: {
+            type: String,
+        },
+        resetOtpExpires: {
+            type: Date,
+        },
+        resetPasswordToken: {
+            type: String,
+        },
+        resetPasswordExpires: {
+            type: Date,
         },
     },
     {

@@ -34,6 +34,11 @@ import { partyRoutes } from "./routes/party.routes";
 import { costingRoutes } from "./routes/costing.routes";
 import { technicalOfferRoutes } from "./routes/technicalOffer.routes";
 import { commercialOfferRoutes } from "./routes/commercialOffer.routes";
+import { rateHistoryRoutes } from "./routes/rateHistory.routes";
+import poRegisterRoutes from "./routes/poRegister.routes";
+import clientRoutes from "./routes/client.routes";
+import itemHistoryRoutes from "./routes/itemHistory.routes";
+import companyProfileRoutes from "./routes/companyProfile.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -45,6 +50,11 @@ app.use("/api/v1/party", partyRoutes);
 app.use("/api/v1/costing", costingRoutes);
 app.use("/api/v1/technical-offer", technicalOfferRoutes);
 app.use("/api/v1/commercial-offer", commercialOfferRoutes);
+app.use("/api/v1/rate-history", rateHistoryRoutes);
+app.use("/api/v1/po-register", poRegisterRoutes);
+app.use("/api/v1/client", clientRoutes);
+app.use("/api/v1/item-history", itemHistoryRoutes);
+app.use("/api/v1/company-profile", companyProfileRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {

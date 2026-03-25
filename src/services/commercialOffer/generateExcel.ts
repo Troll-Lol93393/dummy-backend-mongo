@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { CompanyInfo } from "../shared/companyInfo";
 
 interface CommercialItem {
     serialNumber: string;
@@ -39,7 +40,10 @@ const GREEN_BORDER = "27AE60";
 type BorderStyle = "thin" | "medium";
 
 function thinBorder(): Partial<ExcelJS.Borders> {
-    const side: Partial<ExcelJS.Border> = { style: "thin" as BorderStyle, color: { argb: BORDER_COLOR } };
+    const side: Partial<ExcelJS.Border> = {
+        style: "thin" as BorderStyle,
+        color: { argb: BORDER_COLOR },
+    };
     return { top: side, bottom: side, left: side, right: side };
 }
 
@@ -47,9 +51,12 @@ function formatCurrency(val: number): string {
     return val.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export async function generateCommercialOfferExcel(data: CommercialOfferData): Promise<Buffer> {
+export async function generateCommercialOfferExcel(
+    data: CommercialOfferData,
+    company: CompanyInfo
+): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
-    wb.creator = "Sheth Engineering";
+    wb.creator = company.name;
     wb.created = new Date();
 
     const ws = wb.addWorksheet("Commercial Offer", {
@@ -58,17 +65,17 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
 
     // Column widths — 11 columns
     ws.columns = [
-        { width: 8 },   // A — Sl No
-        { width: 14 },  // B — Item Code
-        { width: 28 },  // C — Item Name
-        { width: 18 },  // D — Material
-        { width: 8 },   // E — Qty
-        { width: 16 },  // F — Sale Price
-        { width: 14 },  // G — HSN Code
-        { width: 10 },  // H — GST %
-        { width: 18 },  // I — Total Before GST
-        { width: 14 },  // J — GST Amt
-        { width: 18 },  // K — Total with GST
+        { width: 8 }, // A — Sl No
+        { width: 14 }, // B — Item Code
+        { width: 28 }, // C — Item Name
+        { width: 18 }, // D — Material
+        { width: 8 }, // E — Qty
+        { width: 16 }, // F — Sale Price
+        { width: 14 }, // G — HSN Code
+        { width: 10 }, // H — GST %
+        { width: 18 }, // I — Total Before GST
+        { width: 14 }, // J — GST Amt
+        { width: 18 }, // K — Total with GST
     ];
 
     let row = 1;
@@ -80,7 +87,7 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
     // Row 1: Company name
     ws.mergeCells(`A${row}:K${row}`);
     const companyCell = ws.getCell(`A${row}`);
-    companyCell.value = "SHETH ENGINEERING";
+    companyCell.value = company.name;
     companyCell.font = { name: "Calibri", size: 18, bold: true, color: { argb: HEADER_FONT } };
     companyCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     companyCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -90,7 +97,7 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
     // Row 2: Tagline
     ws.mergeCells(`A${row}:K${row}`);
     const tagCell = ws.getCell(`A${row}`);
-    tagCell.value = "Precision Engineering & Manufacturing Solutions";
+    tagCell.value = company.tagline || "";
     tagCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "8FAABE" } };
     tagCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     tagCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -105,13 +112,14 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
 
     // Row 4: Details
     ws.mergeCells(`A${row}:D${row}`);
-    ws.getCell(`A${row}`).value = "GSTIN: 24AABCS1234F1ZP";
+    ws.getCell(`A${row}`).value = "GSTIN: " + (company.gstin || "—");
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 9, bold: true };
     ws.mergeCells(`E${row}:G${row}`);
-    ws.getCell(`E${row}`).value = "Vendor Code: SE-2024-001";
+    ws.getCell(`E${row}`).value = "Vendor Code: " + (company.vendorCode || "—");
     ws.getCell(`E${row}`).font = { name: "Calibri", size: 9, bold: true };
     ws.mergeCells(`H${row}:K${row}`);
-    ws.getCell(`H${row}`).value = `Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
+    ws.getCell(`H${row}`).value =
+        `Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
     ws.getCell(`H${row}`).font = { name: "Calibri", size: 9, bold: true };
     ws.getCell(`H${row}`).alignment = { horizontal: "right" };
     ws.getRow(row).height = 18;
@@ -119,7 +127,10 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
 
     // Row 5: Address
     ws.mergeCells(`A${row}:K${row}`);
-    ws.getCell(`A${row}`).value = "Plot No. 123, Industrial Area, Phase-II, Ahmedabad, Gujarat — 382 445  |  Ph: +91 79 2583 XXXX";
+    ws.getCell(`A${row}`).value =
+        [company.address, company.phone ? `Ph: ${company.phone}` : ""]
+            .filter(Boolean)
+            .join("  |  ") || "—";
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 8, color: { argb: "555555" } };
     ws.getCell(`A${row}`).alignment = { horizontal: "center" };
     ws.getRow(row).height = 16;
@@ -160,7 +171,19 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
     // ══════════════════════════════════════
     // TABLE HEADER
     // ══════════════════════════════════════
-    const tableHeaders = ["Sl No.", "Item Code", "Item Name", "Material", "Qty", "Sale Price (₹)", "HSN Code", "GST %", "Total Before GST (₹)", "GST Amount (₹)", "Total with GST (₹)"];
+    const tableHeaders = [
+        "Sl No.",
+        "Item Code",
+        "Item Name",
+        "Material",
+        "Qty",
+        "Sale Price (₹)",
+        "HSN Code",
+        "GST %",
+        "Total Before GST (₹)",
+        "GST Amount (₹)",
+        "Total with GST (₹)",
+    ];
     const headerRow = ws.getRow(row);
     tableHeaders.forEach((h, i) => {
         const cell = headerRow.getCell(i + 1);
@@ -252,13 +275,23 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
     // Grand Total
     ws.mergeCells(`A${row}:H${row}`);
     ws.getCell(`A${row}`).value = "GRAND TOTAL";
-    ws.getCell(`A${row}`).font = { name: "Calibri", size: 12, bold: true, color: { argb: HEADER_FONT } };
+    ws.getCell(`A${row}`).font = {
+        name: "Calibri",
+        size: 12,
+        bold: true,
+        color: { argb: HEADER_FONT },
+    };
     ws.getCell(`A${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     ws.getCell(`A${row}`).alignment = { horizontal: "right", vertical: "middle" };
     ws.getCell(`A${row}`).border = thinBorder();
     ws.mergeCells(`I${row}:K${row}`);
     ws.getCell(`I${row}`).value = `₹ ${formatCurrency(data.grandTotalWithGst)}`;
-    ws.getCell(`I${row}`).font = { name: "Calibri", size: 12, bold: true, color: { argb: HEADER_FONT } };
+    ws.getCell(`I${row}`).font = {
+        name: "Calibri",
+        size: 12,
+        bold: true,
+        color: { argb: HEADER_FONT },
+    };
     ws.getCell(`I${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     ws.getCell(`I${row}`).alignment = { horizontal: "right", vertical: "middle" };
     ws.getCell(`I${row}`).border = thinBorder();
@@ -290,7 +323,7 @@ export async function generateCommercialOfferExcel(data: CommercialOfferData): P
 
     // Signatory
     row += 2;
-    ws.getCell(`A${row}`).value = "For SHETH ENGINEERING";
+    ws.getCell(`A${row}`).value = "For " + company.name;
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 10 };
     row += 3;
 

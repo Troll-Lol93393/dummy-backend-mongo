@@ -7,6 +7,9 @@ import { Costing } from "../models/costing.model";
 import { RFQItems } from "../models/rfqItems.model";
 import { RFQ } from "../models/rfq.models";
 import { CommercialSpecs } from "../models/item.commercial.model";
+import { generateCostingSheetPdf, CostingSheetData } from "../services/costingSheet/generatePdf";
+import { generateCostingSheetExcel } from "../services/costingSheet/generateExcel";
+import { getCompanyProfileForGenerators } from "./companyProfile.controller";
 
 // Round to nearest multiple of 5
 const roundTo5 = (n: number): number => Math.round(n / 5) * 5;
@@ -29,12 +32,7 @@ export const createOrUpdateCosting = asyncHandler(
             throw new ApiError(404, "RFQ not found for this item");
         }
 
-        const {
-            parts = [],
-            packingCost = 0,
-            shippingCost = 0,
-            otherCosts = 0,
-        } = req.body;
+        const { parts = [], packingCost = 0, shippingCost = 0, otherCosts = 0 } = req.body;
 
         if (!Array.isArray(parts) || parts.length === 0) {
             throw new ApiError(400, "At least one part is required");
@@ -67,9 +65,7 @@ export const createOrUpdateCosting = asyncHandler(
                     totalLabourCost: 0,
                     completeSupplyRate: rate,
                     completeSupplyParty: part.completeSupplyParty
-                        ? new mongoose.Types.ObjectId(
-                              part.completeSupplyParty as string
-                          )
+                        ? new mongoose.Types.ObjectId(part.completeSupplyParty as string)
                         : undefined,
                     completeSupplyDate: part.completeSupplyDate
                         ? new Date(part.completeSupplyDate)
@@ -82,30 +78,56 @@ export const createOrUpdateCosting = asyncHandler(
             }
 
             // MANUAL costing
+            const shapeType = part.shapeType ?? "ROUND";
             const diameter = part.diameter ?? 0;
+            const width = part.width ?? 0;
+            const thickness = part.thickness ?? 0;
+            const innerDiameter = part.innerDiameter ?? 0;
             const length = part.length ?? 0;
             const density = part.density ?? 7.85;
             const materialRate = part.materialRate ?? 0;
 
-            // Weight calculation (cylinder volume * density)
-            const weight =
-                (Math.PI * Math.pow(diameter / 2, 2) * length * density) / 1000000;
+            // Weight calculation based on shape (all dims in mm, density in g/cm³)
+            // Volume in mm³ → divide by 1,000,000 to get kg (density g/cm³ = kg/dm³)
+            let volume = 0;
+            switch (shapeType) {
+                case "ROUND":
+                    volume = Math.PI * Math.pow(diameter / 2, 2) * length;
+                    break;
+                case "SQUARE":
+                    volume = Math.pow(width, 2) * length;
+                    break;
+                case "FLAT":
+                    volume = width * thickness * length;
+                    break;
+                case "HEX":
+                    // Regular hexagon: area = (√3/2) × s² where s = across-flats
+                    volume = (Math.sqrt(3) / 2) * Math.pow(diameter, 2) * length;
+                    break;
+                case "PIPE":
+                    volume =
+                        Math.PI *
+                        (Math.pow(diameter / 2, 2) - Math.pow(innerDiameter / 2, 2)) *
+                        length;
+                    break;
+                case "SHEET":
+                    volume = width * length * thickness;
+                    break;
+                default:
+                    volume = Math.PI * Math.pow(diameter / 2, 2) * length;
+            }
+            const weight = (volume * density) / 1000000;
 
             // Raw material cost for this part (rate * weight * quantity)
             const rawMaterialCost = roundTo5(weight * materialRate * partQuantity);
 
             // Labour costs for this part
-            const processedLabourEntries = (part.labourEntries ?? []).map(
-                (entry: any) => ({
-                    ...entry,
-                    labourProcessType: entry.labourProcessType,
-                    party: entry.party || undefined,
-                    cost:
-                        entry.rateType === "PER_KG"
-                            ? entry.rate * weight
-                            : entry.rate,
-                })
-            );
+            const processedLabourEntries = (part.labourEntries ?? []).map((entry: any) => ({
+                ...entry,
+                labourProcessType: entry.labourProcessType,
+                party: entry.party || undefined,
+                cost: entry.rateType === "PER_KG" ? entry.rate * weight : entry.rate,
+            }));
             const totalLabourCost = processedLabourEntries.reduce(
                 (sum: number, e: any) => sum + ((e.cost as number) ?? 0),
                 0
@@ -122,7 +144,11 @@ export const createOrUpdateCosting = asyncHandler(
                 partName: part.partName ?? "Part",
                 quantity: partQuantity,
                 supplyType,
+                shapeType,
                 diameter,
+                width,
+                thickness,
+                innerDiameter,
                 length,
                 density,
                 weight,
@@ -142,13 +168,8 @@ export const createOrUpdateCosting = asyncHandler(
         });
 
         // Aggregate totals
-        const totalPartsCost = processedParts.reduce(
-            (sum: number, p: any) => sum + p.partTotal,
-            0
-        );
-        const sellingPrice = roundTo5(
-            totalPartsCost + packingCost + shippingCost + otherCosts
-        );
+        const totalPartsCost = processedParts.reduce((sum: number, p: any) => sum + p.partTotal, 0);
+        const sellingPrice = roundTo5(totalPartsCost + packingCost + shippingCost + otherCosts);
         const totalCost = roundTo5(sellingPrice * (rfqItem.quantity ?? 1));
 
         const costingData = {
@@ -201,38 +222,32 @@ export const createOrUpdateCosting = asyncHandler(
             });
         }
 
-        res.status(200).json(
-            new ApiResponse(200, costing, "Costing saved successfully")
-        );
+        res.status(200).json(new ApiResponse(200, costing, "Costing saved successfully"));
     }
 );
 
-export const getCosting = asyncHandler(
-    async (req: Request, res: Response, next: NextFunction) => {
-        const { rfqItemId } = req.params;
+export const getCosting = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqItemId } = req.params;
 
-        if (!rfqItemId || !mongoose.Types.ObjectId.isValid(rfqItemId)) {
-            throw new ApiError(400, "Invalid RFQ Item ID");
-        }
-
-        const costing = await Costing.findOne({
-            rfqItem: rfqItemId,
-            isDeleted: false,
-        })
-            .populate("parts.rawMaterialParty", "acName")
-            .populate("parts.completeSupplyParty", "acName")
-            .populate("parts.labourEntries.labourProcessType", "name")
-            .populate("parts.labourEntries.party", "acName");
-
-        if (!costing) {
-            throw new ApiError(404, "Costing not found for this RFQ item");
-        }
-
-        res.status(200).json(
-            new ApiResponse(200, costing, "Costing fetched successfully")
-        );
+    if (!rfqItemId || !mongoose.Types.ObjectId.isValid(rfqItemId)) {
+        throw new ApiError(400, "Invalid RFQ Item ID");
     }
-);
+
+    const costing = await Costing.findOne({
+        rfqItem: rfqItemId,
+        isDeleted: false,
+    })
+        .populate("parts.rawMaterialParty", "acName")
+        .populate("parts.completeSupplyParty", "acName")
+        .populate("parts.labourEntries.labourProcessType", "name")
+        .populate("parts.labourEntries.party", "acName");
+
+    if (!costing) {
+        throw new ApiError(404, "Costing not found for this RFQ item");
+    }
+
+    res.status(200).json(new ApiResponse(200, costing, "Costing fetched successfully"));
+});
 
 export const getCostingsByRfq = asyncHandler(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -255,9 +270,7 @@ export const getCostingsByRfq = asyncHandler(
             .populate("parts.labourEntries.labourProcessType", "name")
             .populate("parts.labourEntries.party", "acName");
 
-        res.status(200).json(
-            new ApiResponse(200, costings, "Costings fetched successfully")
-        );
+        res.status(200).json(new ApiResponse(200, costings, "Costings fetched successfully"));
     }
 );
 
@@ -279,8 +292,239 @@ export const deleteCosting = asyncHandler(
             throw new ApiError(404, "Costing not found for this RFQ item");
         }
 
-        res.status(200).json(
-            new ApiResponse(200, costing, "Costing deleted successfully")
+        res.status(200).json(new ApiResponse(200, costing, "Costing deleted successfully"));
+    }
+);
+
+export const cloneCosting = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { rfqItemId } = req.params;
+        const { sourceCostingId } = req.body;
+
+        if (!rfqItemId || !mongoose.Types.ObjectId.isValid(rfqItemId)) {
+            throw new ApiError(400, "Invalid RFQ Item ID");
+        }
+        if (!sourceCostingId || !mongoose.Types.ObjectId.isValid(sourceCostingId)) {
+            throw new ApiError(400, "Invalid source costing ID");
+        }
+
+        const rfqItem = await RFQItems.findOne({ _id: rfqItemId, isDeleted: false });
+        if (!rfqItem) {
+            throw new ApiError(404, "RFQ Item not found");
+        }
+
+        const rfq = await RFQ.findOne({ items: rfqItemId, isDeleted: false });
+        if (!rfq) {
+            throw new ApiError(404, "RFQ not found for this item");
+        }
+
+        const source = await Costing.findOne({ _id: sourceCostingId, isDeleted: false });
+        if (!source) {
+            throw new ApiError(404, "Source costing not found");
+        }
+
+        // Clone parts (strip _id from subdocs), keep rates and structure
+        const clonedParts = source.parts.map(p => {
+            const part = (p as any).toObject ? (p as any).toObject() : { ...p };
+            delete (part as any)._id;
+            part.labourEntries = part.labourEntries.map((e: any) => {
+                const entry = { ...e };
+                delete entry._id;
+                return entry;
+            });
+            return part;
+        });
+
+        const costingData = {
+            rfqItem: new mongoose.Types.ObjectId(rfqItemId),
+            rfq: rfq._id,
+            parts: clonedParts,
+            totalPartsCost: source.totalPartsCost,
+            packingCost: source.packingCost,
+            shippingCost: source.shippingCost,
+            otherCosts: source.otherCosts,
+            sellingPrice: source.sellingPrice,
+            totalCost: source.sellingPrice * (rfqItem.quantity ?? 1),
+        };
+
+        const costing = await Costing.findOneAndUpdate(
+            { rfqItem: rfqItemId, isDeleted: false },
+            { $set: costingData },
+            { upsert: true, new: true }
         );
+
+        res.status(200).json(new ApiResponse(200, costing, "Costing cloned successfully"));
+    }
+);
+
+export const searchCostingsForClone = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { q } = req.query;
+        const searchTerm = ((q as string) || "").trim();
+
+        if (!searchTerm) {
+            throw new ApiError(400, "Search query is required");
+        }
+
+        const costings = await Costing.find({ isDeleted: false })
+            .populate({
+                path: "rfqItem",
+                match: { isDeleted: false },
+                populate: { path: "item" },
+            })
+            .populate({
+                path: "rfq",
+                select: "prNumber companyName",
+            })
+            .limit(20)
+            .lean();
+
+        // Filter by item name/code or PR number matching the search term
+        const regex = new RegExp(searchTerm, "i");
+        const filtered = costings.filter(c => {
+            const rfqItem = c.rfqItem as any;
+            const rfq = c.rfq as any;
+            if (!rfqItem) return false;
+            return (
+                regex.test(rfqItem.item?.itemName ?? "") ||
+                regex.test(rfqItem.item?.itemCode ?? "") ||
+                regex.test(rfq?.prNumber ?? "")
+            );
+        });
+
+        res.status(200).json(new ApiResponse(200, filtered, "Costings fetched for cloning"));
+    }
+);
+
+// ── Costing Sheet helpers ──
+
+async function buildCostingSheetData(rfqId: string): Promise<CostingSheetData> {
+    const rfq = await RFQ.findById(rfqId).lean();
+    if (!rfq) throw new ApiError(404, "RFQ not found");
+
+    const costings = await Costing.find({ rfq: rfqId, isDeleted: false })
+        .populate({
+            path: "rfqItem",
+            populate: { path: "item" },
+        })
+        .populate("parts.rawMaterialParty", "acName")
+        .populate("parts.completeSupplyParty", "acName")
+        .populate("parts.labourEntries.labourProcessType", "name")
+        .populate("parts.labourEntries.party", "acName")
+        .lean();
+
+    const items = costings
+        .filter(c => c.rfqItem)
+        .map(c => {
+            const rfqItem = c.rfqItem as any;
+            const item = rfqItem?.item ?? {};
+            return {
+                serialNumber: rfqItem?.serialNumber ?? "",
+                itemCode: item.itemCode ?? "",
+                itemName: item.itemName ?? "",
+                itemType: item.itemType ?? "UNIT",
+                quantity: rfqItem?.quantity ?? 1,
+                parts: (c.parts ?? []).map(p => ({
+                    partName: p.partName,
+                    quantity: p.quantity,
+                    supplyType: p.supplyType as "MANUAL" | "COMPLETE_SUPPLY",
+                    shapeType: p.shapeType,
+                    diameter: p.diameter,
+                    width: p.width,
+                    thickness: p.thickness,
+                    innerDiameter: p.innerDiameter,
+                    length: p.length,
+                    density: p.density,
+                    weight: p.weight,
+                    materialRate: p.materialRate,
+                    rawMaterialParty: p.rawMaterialParty as any,
+                    rawMaterialCost: p.rawMaterialCost,
+                    labourEntries: (p.labourEntries ?? []).map(le => ({
+                        labourProcessType: le.labourProcessType as any,
+                        party: le.party as any,
+                        rate: le.rate,
+                        rateType: le.rateType as "PER_PIECE" | "PER_KG",
+                        cost: le.cost,
+                    })),
+                    totalLabourCost: p.totalLabourCost,
+                    completeSupplyRate: p.completeSupplyRate,
+                    completeSupplyParty: p.completeSupplyParty as any,
+                    completeSupplyDate: p.completeSupplyDate
+                        ? new Date(p.completeSupplyDate).toISOString()
+                        : undefined,
+                    costPrice: p.costPrice,
+                    profitMargin: p.profitMargin,
+                    profitAmount: p.profitAmount,
+                    partTotal: p.partTotal,
+                })),
+                totalPartsCost: c.totalPartsCost,
+                packingCost: c.packingCost,
+                shippingCost: c.shippingCost,
+                otherCosts: c.otherCosts,
+                sellingPrice: c.sellingPrice,
+                totalCost: c.totalCost,
+            };
+        });
+
+    const grandTotal = items.reduce((sum, i) => sum + i.totalCost, 0);
+
+    return {
+        prNumber: rfq.prNumber,
+        companyName: rfq.companyName,
+        location: rfq.location,
+        generatedDate: new Date().toLocaleDateString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+        }),
+        items,
+        grandTotal,
+    };
+}
+
+export const downloadCostingSheetPdf = asyncHandler(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const rfqId = req.params.rfqId!;
+
+        if (!rfqId || !mongoose.Types.ObjectId.isValid(rfqId)) {
+            throw new ApiError(400, "Invalid RFQ ID");
+        }
+
+        const [data, company] = await Promise.all([
+            buildCostingSheetData(rfqId),
+            getCompanyProfileForGenerators(),
+        ]);
+        const pdfStream = generateCostingSheetPdf(data, company);
+
+        const filename = `Costing_Sheet_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`;
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+        pdfStream.pipe(res);
+    }
+);
+
+export const downloadCostingSheetExcel = asyncHandler(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const rfqId = req.params.rfqId!;
+
+        if (!rfqId || !mongoose.Types.ObjectId.isValid(rfqId)) {
+            throw new ApiError(400, "Invalid RFQ ID");
+        }
+
+        const [data, company] = await Promise.all([
+            buildCostingSheetData(rfqId),
+            getCompanyProfileForGenerators(),
+        ]);
+        const buffer = await generateCostingSheetExcel(data, company);
+
+        const filename = `Costing_Sheet_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.xlsx`;
+        res.setHeader(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+        res.send(buffer);
     }
 );
