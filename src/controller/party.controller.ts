@@ -264,149 +264,250 @@ export const deleteParty = asyncHandler(
     }
 );
 
-export const importPartiesFromExcel = asyncHandler(
-    async (req: Request, res: Response, next: NextFunction) => {
-        if (!req.file) {
-            throw new ApiError(400, "Excel file is required");
+// Flexible column alias map: lowercase alias -> model field
+const PARTY_COLUMN_ALIASES: Record<string, string> = {
+    // acName
+    acname: "acName", "ac name": "acName", "account name": "acName", "party name": "acName", "name": "acName", "firm name": "acName", "company": "acName", "company name": "acName",
+    // cpName
+    cpname: "cpName", "cp name": "cpName", "contact person": "cpName", "contact name": "cpName", "contact": "cpName",
+    // mobile
+    mobile: "mobile", "mobile no": "mobile", "mobile number": "mobile", "mob": "mobile", "cell": "mobile",
+    // phone
+    phone: "phone", "phone no": "phone", "phone number": "phone", "telephone": "phone", "tel": "phone", "landline": "phone",
+    // email
+    email: "email", "e-mail": "email", "email id": "email", "emailid": "email", "mail": "email",
+    // addresses
+    add1: "add1", "address 1": "add1", "address1": "add1", "address line 1": "add1", "addressline1": "add1", "address": "add1",
+    add2: "add2", "address 2": "add2", "address2": "add2", "address line 2": "add2", "addressline2": "add2",
+    add3: "add3", "address 3": "add3", "address3": "add3", "address line 3": "add3", "addressline3": "add3",
+    // pin
+    pin: "pin", pincode: "pin", "pin code": "pin", "zip": "pin", "zip code": "pin", "postal code": "pin",
+    // tax identifiers
+    cin: "cin", vat: "vat", "vat no": "vat", cst: "cst", "cst no": "cst",
+    pan: "pan", "pan no": "pan", "pan number": "pan",
+    tan: "tan", "tan no": "tan", "tan number": "tan",
+    range: "range",
+    tin: "tin", "tin no": "tin", "tin number": "tin",
+    ecc: "ecc", "ecc no": "ecc",
+    stregn: "stregn", "st regn": "stregn", "st registration": "stregn", "service tax": "stregn",
+    // state
+    state: "state", "state name": "state",
+    statecd: "statecd", "state cd": "statecd", "state code": "statecd", "statecode": "statecd",
+    // gstin
+    gstin: "gstin", "gst": "gstin", "gst no": "gstin", "gst number": "gstin", "gstin no": "gstin",
+    // partyType
+    partytype: "partyType", "party type": "partyType", "type": "partyType",
+    // partySubType
+    partysubtype: "partySubType", "party sub type": "partySubType", "sub type": "partySubType", "subtype": "partySubType", "category": "partySubType",
+};
+
+// Friendly party type aliases -> model enum
+const PARTY_TYPE_ALIASES: Record<string, string> = {
+    raw_material_dealer: "RAW_MATERIAL_DEALER",
+    "raw material dealer": "RAW_MATERIAL_DEALER",
+    "raw material": "RAW_MATERIAL_DEALER",
+    "raw dealer": "RAW_MATERIAL_DEALER",
+    dealer: "RAW_MATERIAL_DEALER",
+    material: "RAW_MATERIAL_DEALER",
+    labour_job_worker: "LABOUR_JOB_WORKER",
+    "labour job worker": "LABOUR_JOB_WORKER",
+    labour: "LABOUR_JOB_WORKER",
+    "job worker": "LABOUR_JOB_WORKER",
+    "job work": "LABOUR_JOB_WORKER",
+    labor: "LABOUR_JOB_WORKER",
+    complete_supply: "COMPLETE_SUPPLY",
+    "complete supply": "COMPLETE_SUPPLY",
+    supply: "COMPLETE_SUPPLY",
+    "complete": "COMPLETE_SUPPLY",
+};
+
+const resolvePartyType = (value: string): string | null => {
+    const cleaned = value.trim();
+    if (VALID_PARTY_TYPES.includes(cleaned)) return cleaned;
+    return PARTY_TYPE_ALIASES[cleaned.toLowerCase()] || null;
+};
+
+const mapExcelRow = (row: Record<string, unknown>, aliasMap: Record<string, string>): Record<string, string> => {
+    const mapped: Record<string, string> = {};
+    for (const [excelCol, value] of Object.entries(row)) {
+        if (value === undefined || value === null || String(value).trim() === "") continue;
+        const normalizedCol = excelCol.trim().toLowerCase().replace(/[_\-\.]+/g, " ").replace(/\s+/g, " ");
+        const modelField = aliasMap[normalizedCol];
+        if (modelField && !mapped[modelField]) {
+            mapped[modelField] = String(value).trim();
         }
+    }
+    return mapped;
+};
+
+const isRowEmpty = (row: Record<string, unknown>): boolean => {
+    return Object.values(row).every(v => v === undefined || v === null || String(v).trim() === "");
+};
+
+const readExcelFile = (file: Express.Multer.File): Record<string, unknown>[] => {
+    const filePath = file.path;
+    const allowedExtensions = [".xlsx", ".xls", ".csv"];
+    const fileExtension = file.originalname.substring(file.originalname.lastIndexOf(".")).toLowerCase();
+
+    if (!allowedExtensions.includes(fileExtension)) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        throw new ApiError(400, "Only .xlsx, .xls, and .csv files are allowed");
+    }
+
+    let workbook: XLSX.WorkBook;
+    try {
+        workbook = XLSX.readFile(filePath);
+    } catch {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        throw new ApiError(400, "Failed to read the Excel file");
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        throw new ApiError(400, "Excel file has no sheets");
+    }
+
+    const sheet = workbook.Sheets[sheetName];
+    const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(sheet!);
+
+    if (!rows || rows.length === 0) {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        throw new ApiError(400, "Excel file is empty or has no valid rows");
+    }
+
+    return rows;
+};
+
+export const importPartiesFromExcel = asyncHandler(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        if (!req.file) throw new ApiError(400, "Excel file is required");
 
         const filePath = req.file.path;
-        const allowedExtensions = [".xlsx", ".xls"];
-        const fileExtension = req.file.originalname
-            .substring(req.file.originalname.lastIndexOf("."))
-            .toLowerCase();
+        const rows = readExcelFile(req.file);
 
-        if (!allowedExtensions.includes(fileExtension)) {
-            // Clean up the uploaded file
-            fs.unlinkSync(filePath);
-            throw new ApiError(400, "Only .xlsx and .xls files are allowed");
+        // Pre-load sub-type lookup caches (name -> _id)
+        const [rawMaterialTypes, labourProcessTypes] = await Promise.all([
+            RawMaterialType.find({}).lean(),
+            LabourProcessType.find({}).lean(),
+        ]);
+
+        const rawMaterialMap = new Map<string, string>();
+        for (const rmt of rawMaterialTypes) {
+            rawMaterialMap.set((rmt as Record<string, unknown> & { name: string }).name.toLowerCase(), String(rmt._id));
         }
 
-        let workbook: XLSX.WorkBook;
-        try {
-            workbook = XLSX.readFile(filePath);
-        } catch (err) {
-            fs.unlinkSync(filePath);
-            throw new ApiError(400, "Failed to read the Excel file");
-        }
-
-        const sheetName = workbook.SheetNames[0];
-        if (!sheetName) {
-            fs.unlinkSync(filePath);
-            throw new ApiError(400, "Excel file has no sheets");
-        }
-        const sheet = workbook.Sheets[sheetName];
-        const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(sheet!);
-
-        if (!rows || rows.length === 0) {
-            fs.unlinkSync(filePath);
-            throw new ApiError(400, "Excel file is empty or has no valid rows");
+        const labourProcessMap = new Map<string, string>();
+        for (const lpt of labourProcessTypes) {
+            labourProcessMap.set((lpt as Record<string, unknown> & { name: string }).name.toLowerCase(), String(lpt._id));
         }
 
         const successCount: number[] = [];
         const errors: { row: number; message: string }[] = [];
-
-        // Column mapping: Excel column headers -> model fields
-        const columnMap: Record<string, string> = {
-            acName: "acName",
-            cpName: "cpName",
-            mobile: "mobile",
-            phone: "phone",
-            email: "email",
-            add1: "add1",
-            add2: "add2",
-            add3: "add3",
-            pin: "pin",
-            cin: "cin",
-            vat: "vat",
-            cst: "cst",
-            pan: "pan",
-            tan: "tan",
-            range: "range",
-            tin: "tin",
-            ecc: "ecc",
-            stregn: "stregn",
-            state: "state",
-            statecd: "statecd",
-            gstin: "gstin",
-            partyType: "partyType",
-            partySubType: "partySubType",
-        };
+        const partiesToInsert: Record<string, unknown>[] = [];
 
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i]!;
-            const rowIndex = i + 2; // Excel row number (1-based, header is row 1)
+            const rowIndex = i + 2;
+
+            if (isRowEmpty(row)) continue;
 
             try {
-                const partyData: Record<string, any> = {};
+                const partyData = mapExcelRow(row, PARTY_COLUMN_ALIASES);
 
-                for (const [excelCol, modelField] of Object.entries(
-                    columnMap
-                )) {
-                    if (row[excelCol] !== undefined && row[excelCol] !== null) {
-                        partyData[modelField] = String(row[excelCol]).trim();
+                // At minimum, need acName or some identifier
+                if (!partyData.acName && !partyData.cpName && !partyData.mobile && !partyData.email && !partyData.gstin) {
+                    errors.push({ row: rowIndex, message: "Row has no identifiable party data (need at least name, contact person, mobile, email, or GSTIN)" });
+                    continue;
+                }
+
+                // Resolve partyType
+                if (partyData.partyType) {
+                    const resolved = resolvePartyType(partyData.partyType);
+                    if (!resolved) {
+                        errors.push({ row: rowIndex, message: `Invalid partyType: "${partyData.partyType}". Use: Raw Material Dealer, Labour Job Worker, or Complete Supply` });
+                        continue;
                     }
-                }
-
-                if (!partyData.partyType) {
-                    errors.push({
-                        row: rowIndex,
-                        message: "partyType is required",
-                    });
+                    partyData.partyType = resolved;
+                } else {
+                    errors.push({ row: rowIndex, message: "partyType is required" });
                     continue;
                 }
 
-                if (!VALID_PARTY_TYPES.includes(partyData.partyType)) {
-                    errors.push({
-                        row: rowIndex,
-                        message:
-                            "partyType must be RAW_MATERIAL_DEALER, LABOUR_JOB_WORKER, or COMPLETE_SUPPLY",
-                    });
-                    continue;
+                // Resolve partySubType — accept ObjectId or name lookup
+                if (partyData.partyType !== "COMPLETE_SUPPLY") {
+                    if (!partyData.partySubType) {
+                        errors.push({ row: rowIndex, message: "partySubType (category name or ID) is required for this party type" });
+                        continue;
+                    }
+
+                    if (mongoose.Types.ObjectId.isValid(partyData.partySubType)) {
+                        // Already a valid ObjectId, keep as-is
+                    } else {
+                        // Try to resolve by name
+                        const subTypeName = partyData.partySubType.toLowerCase();
+                        const lookupMap = partyData.partyType === "RAW_MATERIAL_DEALER" ? rawMaterialMap : labourProcessMap;
+                        const resolvedId = lookupMap.get(subTypeName);
+
+                        if (!resolvedId) {
+                            const typeName = partyData.partyType === "RAW_MATERIAL_DEALER" ? "raw material type" : "labour process type";
+                            errors.push({ row: rowIndex, message: `Could not find ${typeName} named "${partyData.partySubType}"` });
+                            continue;
+                        }
+                        partyData.partySubType = resolvedId;
+                    }
+                } else {
+                    // COMPLETE_SUPPLY doesn't need partySubType
+                    delete partyData.partySubType;
                 }
 
-                if (partyData.partyType !== "COMPLETE_SUPPLY" && !partyData.partySubType) {
-                    errors.push({
-                        row: rowIndex,
-                        message: "partySubType is required for this party type",
-                    });
-                    continue;
-                }
-
-                if (
-                    partyData.partySubType &&
-                    !mongoose.Types.ObjectId.isValid(partyData.partySubType)
-                ) {
-                    errors.push({
-                        row: rowIndex,
-                        message: "Invalid partySubType ID",
-                    });
-                    continue;
-                }
-
-                await Party.create(partyData);
+                partiesToInsert.push(partyData);
                 successCount.push(rowIndex);
-            } catch (err: any) {
-                errors.push({
-                    row: rowIndex,
-                    message: err.message || "Unknown error",
-                });
+            } catch (err: unknown) {
+                errors.push({ row: rowIndex, message: (err as Error).message || "Unknown error" });
             }
         }
 
-        // Clean up the uploaded file
-        fs.unlinkSync(filePath);
+        // Bulk insert in batches of 100
+        let insertedCount = 0;
+        const insertErrors: { row: number; message: string }[] = [];
+
+        for (let i = 0; i < partiesToInsert.length; i += 100) {
+            const batch = partiesToInsert.slice(i, i + 100);
+            try {
+                const result = await Party.insertMany(batch, { ordered: false });
+                insertedCount += result.length;
+            } catch (err: unknown) {
+                const bulkErr = err as { writeErrors?: { index: number; errmsg: string }[]; insertedDocs?: unknown[] };
+                if (bulkErr.writeErrors) {
+                    for (const writeErr of bulkErr.writeErrors) {
+                        const globalIdx = i + writeErr.index;
+                        insertErrors.push({ row: successCount[globalIdx] ?? globalIdx + 2, message: writeErr.errmsg });
+                    }
+                    insertedCount += (batch.length - (bulkErr.writeErrors?.length ?? 0));
+                } else {
+                    for (let j = 0; j < batch.length; j++) {
+                        insertErrors.push({ row: successCount[i + j] ?? (i + j + 2), message: (err as Error).message || "Insert failed" });
+                    }
+                }
+            }
+        }
+
+        // Clean up
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+        const allErrors = [...errors, ...insertErrors];
 
         res.status(200).json(
             new ApiResponse(
                 200,
                 {
                     totalRows: rows.length,
-                    successCount: successCount.length,
-                    errorCount: errors.length,
-                    errors,
+                    successCount: insertedCount,
+                    errorCount: allErrors.length,
+                    errors: allErrors,
                 },
-                `Import completed: ${successCount.length} parties created, ${errors.length} rows failed`
+                `Import completed: ${insertedCount} parties created, ${allErrors.length} rows failed`
             )
         );
     }

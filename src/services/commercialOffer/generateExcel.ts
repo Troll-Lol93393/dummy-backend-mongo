@@ -53,7 +53,8 @@ function formatCurrency(val: number): string {
 
 export async function generateCommercialOfferExcel(
     data: CommercialOfferData,
-    company: CompanyInfo
+    company: CompanyInfo,
+    logoBuffer?: Buffer | null
 ): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
     wb.creator = company.name;
@@ -92,6 +93,19 @@ export async function generateCommercialOfferExcel(
     companyCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     companyCell.alignment = { horizontal: "center", vertical: "middle" };
     ws.getRow(row).height = 36;
+
+    // Logo in header (right side)
+    if (logoBuffer) {
+        try {
+            const imageId = wb.addImage({ buffer: logoBuffer, extension: "png" });
+            ws.addImage(imageId, {
+                tl: { col: 9.2, row: row - 1 + 0.1 } as unknown as ExcelJS.Anchor,
+                br: { col: 10.8, row: row - 1 + 0.9 } as unknown as ExcelJS.Anchor,
+            });
+        } catch {
+            // Ignore logo errors
+        }
+    }
     row++;
 
     // Row 2: Tagline
@@ -336,7 +350,17 @@ export async function generateCommercialOfferExcel(
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 10, bold: true };
     row++;
 
-    if (data.ownerName) {
+    if (company.contactPersonName) {
+        ws.getCell(`A${row}`).value = company.contactPersonName;
+        ws.getCell(`A${row}`).font = { name: "Calibri", size: 9, bold: true };
+        row++;
+    }
+    if (company.contactPersonPhone) {
+        ws.getCell(`A${row}`).value = `Ph: ${company.contactPersonPhone}`;
+        ws.getCell(`A${row}`).font = { name: "Calibri", size: 9, color: { argb: "555555" } };
+        row++;
+    }
+    if (!company.contactPersonName && data.ownerName) {
         ws.getCell(`A${row}`).value = data.ownerName;
         ws.getCell(`A${row}`).font = { name: "Calibri", size: 9, color: { argb: "555555" } };
     }

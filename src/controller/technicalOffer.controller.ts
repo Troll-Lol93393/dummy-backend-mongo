@@ -8,6 +8,7 @@ import { PORegister } from "../models/poRegister.model";
 import { generateTechOfferPdf } from "../services/technicalOffer/generatePdf";
 import { generateTechOfferExcel } from "../services/technicalOffer/generateExcel";
 import { getCompanyProfileForGenerators } from "./companyProfile.controller";
+import { fetchLogoBuffer } from "../services/shared/fetchLogo";
 
 // ── Populated-doc helper interfaces ──
 
@@ -383,11 +384,16 @@ export const downloadTechOfferPdf = asyncHandler(
         }
 
         const company = await getCompanyProfileForGenerators();
-        const pdfStream = generateTechOfferPdf(data, company);
+        const logoBuffer = await fetchLogoBuffer(company);
+        const pdfStream = generateTechOfferPdf(data, company, logoBuffer);
 
-        const filename = `Technical_Offer_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`;
+        const safePr = data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_");
+        const filename = `Technical Offer - ${data.prNumber}.pdf`;
         res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${safePr}.pdf"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
 
         pdfStream.pipe(res);
     }
@@ -414,14 +420,19 @@ export const downloadTechOfferExcel = asyncHandler(
         }
 
         const company = await getCompanyProfileForGenerators();
-        const buffer = await generateTechOfferExcel(data, company);
+        const logoBuffer = await fetchLogoBuffer(company);
+        const buffer = await generateTechOfferExcel(data, company, logoBuffer);
 
-        const filename = `Technical_Offer_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.xlsx`;
+        const safePr = data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_");
+        const filename = `Technical Offer - ${data.prNumber}.xlsx`;
         res.setHeader(
             "Content-Type",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         );
-        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${safePr}.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
 
         res.send(buffer);
     }

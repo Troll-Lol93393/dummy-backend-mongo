@@ -14,6 +14,7 @@ export interface ICompanyProfile {
     phone?: string;
     email?: string;
     contactPersonName?: string;
+    contactPersonPhone?: string;
     contactPersonEmail?: string;
     logoUrl?: string;
 }
@@ -33,6 +34,7 @@ const companyProfileSchema = new Schema<ICompanyProfile>(
         phone: { type: String, trim: true, default: "" },
         email: { type: String, trim: true, default: "" },
         contactPersonName: { type: String, trim: true, default: "" },
+        contactPersonPhone: { type: String, trim: true, default: "" },
         contactPersonEmail: { type: String, trim: true, default: "" },
         logoUrl: { type: String, trim: true, default: "" },
     },

@@ -208,12 +208,16 @@ function drawKVCell(
         .text(value, x + 5, y + 12, { width: w - 10, lineBreak: false });
 }
 
-export function generateCostingSheetPdf(data: CostingSheetData, company: CompanyInfo): PassThrough {
+export function generateCostingSheetPdf(
+    data: CostingSheetData,
+    company: CompanyInfo,
+    logoBuffer?: Buffer | null
+): PassThrough {
     const stream = new PassThrough();
     const doc = new PDFDocument({ margin: 40, size: "A4", layout: "landscape" });
     doc.pipe(stream);
 
-    drawHeader(doc, data, company);
+    drawHeader(doc, data, company, logoBuffer);
 
     data.items.forEach((item, idx) => {
         drawItemSection(doc, item, idx);
@@ -226,7 +230,12 @@ export function generateCostingSheetPdf(data: CostingSheetData, company: Company
     return stream;
 }
 
-function drawHeader(doc: PDFKit.PDFDocument, data: CostingSheetData, company: CompanyInfo) {
+function drawHeader(
+    doc: PDFKit.PDFDocument,
+    data: CostingSheetData,
+    company: CompanyInfo,
+    logoBuffer?: Buffer | null
+) {
     const pageWidth = pw(doc);
     const x = mg(doc).left;
 
@@ -239,10 +248,23 @@ function drawHeader(doc: PDFKit.PDFDocument, data: CostingSheetData, company: Co
     doc.rect(x, hY, pageWidth, 50).fill(C.navy);
     doc.rect(x, hY, 4, 50).fill(C.gold);
 
+    // Logo (right side of header)
+    let textWidth = pageWidth - 36;
+    if (logoBuffer) {
+        try {
+            const logoX = x + pageWidth - 95;
+            const logoY = hY + 5;
+            doc.image(logoBuffer, logoX, logoY, { fit: [80, 40], align: "center", valign: "center" });
+            textWidth = pageWidth - 130;
+        } catch {
+            // Ignore logo errors
+        }
+    }
+
     doc.font("Helvetica-Bold")
         .fontSize(20)
         .fillColor(C.headerText)
-        .text(company.name, x + 18, hY + 8, { width: pageWidth - 36 });
+        .text(company.name, x + 18, hY + 8, { width: textWidth });
     doc.font("Helvetica")
         .fontSize(9)
         .fillColor("#7faabe")

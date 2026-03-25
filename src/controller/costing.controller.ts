@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import mongoose from "mongoose";
+import fs from "fs";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/apiResponse";
+import { uploadFileToCloudinary } from "../utils/cloudinary";
 import { Costing } from "../models/costing.model";
 import { RFQItems } from "../models/rfqItems.model";
 import { RFQ } from "../models/rfq.models";
@@ -10,6 +12,7 @@ import { CommercialSpecs } from "../models/item.commercial.model";
 import { generateCostingSheetPdf, CostingSheetData } from "../services/costingSheet/generatePdf";
 import { generateCostingSheetExcel } from "../services/costingSheet/generateExcel";
 import { getCompanyProfileForGenerators } from "./companyProfile.controller";
+import { fetchLogoBuffer } from "../services/shared/fetchLogo";
 
 // Round to nearest multiple of 5
 const roundTo5 = (n: number): number => Math.round(n / 5) * 5;
@@ -70,6 +73,7 @@ export const createOrUpdateCosting = asyncHandler(
                     completeSupplyDate: part.completeSupplyDate
                         ? new Date(part.completeSupplyDate)
                         : undefined,
+                    completeSupplyProofDocumentUrl: part.completeSupplyProofDocumentUrl ?? "",
                     costPrice,
                     profitMargin,
                     profitAmount,
@@ -127,6 +131,7 @@ export const createOrUpdateCosting = asyncHandler(
                 labourProcessType: entry.labourProcessType,
                 party: entry.party || undefined,
                 cost: entry.rateType === "PER_KG" ? entry.rate * weight : entry.rate,
+                proofDocumentUrl: entry.proofDocumentUrl ?? "",
             }));
             const totalLabourCost = processedLabourEntries.reduce(
                 (sum: number, e: any) => sum + ((e.cost as number) ?? 0),
@@ -157,6 +162,7 @@ export const createOrUpdateCosting = asyncHandler(
                     ? new mongoose.Types.ObjectId(part.rawMaterialParty as string)
                     : undefined,
                 rawMaterialCost,
+                rawMaterialProofDocumentUrl: part.rawMaterialProofDocumentUrl ?? "",
                 labourEntries: processedLabourEntries,
                 totalLabourCost: totalLabourCostForPart,
                 completeSupplyRate: 0,
@@ -494,13 +500,41 @@ export const downloadCostingSheetPdf = asyncHandler(
             buildCostingSheetData(rfqId),
             getCompanyProfileForGenerators(),
         ]);
-        const pdfStream = generateCostingSheetPdf(data, company);
+        const logoBuffer = await fetchLogoBuffer(company);
+        const pdfStream = generateCostingSheetPdf(data, company, logoBuffer);
 
-        const filename = `Costing_Sheet_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.pdf`;
+        const safePr = data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_");
+        const filename = `Costing Sheet - ${data.prNumber}.pdf`;
         res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${safePr}.pdf"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
 
         pdfStream.pipe(res);
+    }
+);
+
+export const uploadProofDocument = asyncHandler(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const file = req.file;
+        if (!file) {
+            throw new ApiError(400, "Proof document file is required");
+        }
+
+        const result = await uploadFileToCloudinary(file.path);
+
+        if (fs.existsSync(file.path)) {
+            fs.unlinkSync(file.path);
+        }
+
+        if (!result) {
+            throw new ApiError(500, "Failed to upload proof document");
+        }
+
+        res.status(200).json(
+            new ApiResponse(200, { url: result.secure_url }, "Proof document uploaded successfully")
+        );
     }
 );
 
@@ -516,14 +550,19 @@ export const downloadCostingSheetExcel = asyncHandler(
             buildCostingSheetData(rfqId),
             getCompanyProfileForGenerators(),
         ]);
-        const buffer = await generateCostingSheetExcel(data, company);
+        const logoBuffer = await fetchLogoBuffer(company);
+        const buffer = await generateCostingSheetExcel(data, company, logoBuffer);
 
-        const filename = `Costing_Sheet_${data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_")}.xlsx`;
+        const safePr = data.prNumber.replace(/[^a-zA-Z0-9-_]/g, "_");
+        const filename = `Costing Sheet - ${data.prNumber}.xlsx`;
         res.setHeader(
             "Content-Type",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         );
-        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader(
+            "Content-Disposition",
+            `attachment; filename="${safePr}.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`
+        );
 
         res.send(buffer);
     }

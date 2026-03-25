@@ -8,6 +8,7 @@ export interface CompanyInfo {
     phone?: string;
     email?: string;
     contactPersonName?: string;
+    contactPersonPhone?: string;
     contactPersonEmail?: string;
     logoUrl?: string;
 }

@@ -65,6 +65,7 @@ export const updateCompanyProfile = asyncHandler(
             phone,
             email,
             contactPersonName,
+            contactPersonPhone,
             contactPersonEmail,
         } = req.body;
 
@@ -90,6 +91,8 @@ export const updateCompanyProfile = asyncHandler(
         if (phone !== undefined) profile.phone = phone.trim();
         if (email !== undefined) profile.email = email.trim();
         if (contactPersonName !== undefined) profile.contactPersonName = contactPersonName.trim();
+        if (contactPersonPhone !== undefined)
+            profile.contactPersonPhone = contactPersonPhone.trim();
         if (contactPersonEmail !== undefined)
             profile.contactPersonEmail = contactPersonEmail.trim();
 
@@ -142,6 +145,7 @@ export async function getCompanyProfileForGenerators(): Promise<CompanyInfo> {
             phone: profile.phone,
             email: profile.email,
             contactPersonName: profile.contactPersonName,
+            contactPersonPhone: profile.contactPersonPhone,
             contactPersonEmail: profile.contactPersonEmail,
             logoUrl: profile.logoUrl,
         };

@@ -6,6 +6,7 @@ export interface ILabourEntry {
     rate: number;
     rateType: "PER_PIECE" | "PER_KG";
     cost: number;
+    proofDocumentUrl?: string;
 }
 
 export type ShapeType = "ROUND" | "SQUARE" | "FLAT" | "HEX" | "PIPE" | "SHEET";
@@ -27,6 +28,7 @@ export interface ICostingPart {
     materialRate: number;
     rawMaterialParty?: mongoose.Types.ObjectId;
     rawMaterialCost: number;
+    rawMaterialProofDocumentUrl?: string;
     labourEntries: ILabourEntry[];
     totalLabourCost: number;
 
@@ -34,6 +36,7 @@ export interface ICostingPart {
     completeSupplyRate: number;
     completeSupplyParty?: mongoose.Types.ObjectId;
     completeSupplyDate?: Date;
+    completeSupplyProofDocumentUrl?: string;
 
     // Part-level pricing
     costPrice: number;
@@ -85,6 +88,7 @@ const labourEntrySchema = new Schema<ILabourEntry>(
             type: Number,
             default: 0,
         },
+        proofDocumentUrl: { type: String, trim: true, default: "" },
     },
     { _id: true }
 );
@@ -118,6 +122,7 @@ const costingPartSchema = new Schema<ICostingPart>(
             ref: "Party",
         },
         rawMaterialCost: { type: Number, default: 0 },
+        rawMaterialProofDocumentUrl: { type: String, trim: true, default: "" },
         labourEntries: [labourEntrySchema],
         totalLabourCost: { type: Number, default: 0 },
 
@@ -128,6 +133,7 @@ const costingPartSchema = new Schema<ICostingPart>(
             ref: "Party",
         },
         completeSupplyDate: { type: Date },
+        completeSupplyProofDocumentUrl: { type: String, trim: true, default: "" },
 
         costPrice: { type: Number, default: 0 },
         profitMargin: { type: Number, default: 0 },

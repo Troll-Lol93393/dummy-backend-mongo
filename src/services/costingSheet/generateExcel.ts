@@ -100,7 +100,8 @@ const COLS = 12; // A through L
 
 export async function generateCostingSheetExcel(
     data: CostingSheetData,
-    company: CompanyInfo
+    company: CompanyInfo,
+    logoBuffer?: Buffer | null
 ): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
     wb.creator = company.name;
@@ -140,6 +141,19 @@ export async function generateCostingSheetExcel(
     titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     titleCell.alignment = { horizontal: "center", vertical: "middle" };
     ws.getRow(row).height = 34;
+
+    // Logo in header (right side)
+    if (logoBuffer) {
+        try {
+            const imageId = wb.addImage({ buffer: logoBuffer, extension: "png" });
+            ws.addImage(imageId, {
+                tl: { col: 10.2, row: row - 1 + 0.1 } as unknown as ExcelJS.Anchor,
+                br: { col: 11.8, row: row - 1 + 0.9 } as unknown as ExcelJS.Anchor,
+            });
+        } catch {
+            // Ignore logo errors
+        }
+    }
     row++;
 
     // Tagline

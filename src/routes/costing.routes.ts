@@ -8,12 +8,15 @@ import {
     searchCostingsForClone,
     downloadCostingSheetPdf,
     downloadCostingSheetExcel,
+    uploadProofDocument,
 } from "../controller/costing.controller";
 import { verifyJWT } from "../middlewares/auth.middleware";
+import { upload } from "../middlewares/multer.middleware";
 
 const router = Router();
 router.use(verifyJWT);
 
+router.post("/proof-document", upload.single("proofDocument"), uploadProofDocument);
 router.get("/search/clone", searchCostingsForClone);
 router.get("/rfq/:rfqId/sheet/pdf", downloadCostingSheetPdf);
 router.get("/rfq/:rfqId/sheet/excel", downloadCostingSheetExcel);

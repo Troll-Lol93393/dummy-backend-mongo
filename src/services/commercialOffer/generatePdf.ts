@@ -63,13 +63,14 @@ function formatCurrency(val: number): string {
 
 export function generateCommercialOfferPdf(
     data: CommercialOfferData,
-    company: CompanyInfo
+    company: CompanyInfo,
+    logoBuffer?: Buffer | null
 ): PassThrough {
     const stream = new PassThrough();
     const doc = new PDFDocument({ margin: 50, size: "A4", layout: "landscape" });
     doc.pipe(stream);
 
-    drawLetterhead(doc, data, company);
+    drawLetterhead(doc, data, company, logoBuffer);
     drawSubjectLine(doc, data);
     drawItemsTable(doc, data);
     drawTotals(doc, data);
@@ -82,7 +83,8 @@ export function generateCommercialOfferPdf(
 function drawLetterhead(
     doc: PDFKit.PDFDocument,
     _data: CommercialOfferData,
-    company: CompanyInfo
+    company: CompanyInfo,
+    logoBuffer?: Buffer | null
 ): void {
     const pageWidth = pw(doc);
     const leftX = m(doc).left;
@@ -97,10 +99,30 @@ function drawLetterhead(
     doc.rect(leftX, headerY, pageWidth, headerH).fill(COLORS.primary);
     doc.rect(leftX, headerY, 5, headerH).fill(COLORS.accentGold);
 
+    // Logo (right side of header)
+    const logoWidth = 80;
+    const logoHeight = 40;
+    const textLeft = leftX + 20;
+    let textWidth = pageWidth - 40;
+    if (logoBuffer) {
+        try {
+            const logoX = leftX + pageWidth - logoWidth - 15;
+            const logoY = headerY + 10;
+            doc.image(logoBuffer, logoX, logoY, {
+                fit: [logoWidth, logoHeight],
+                align: "center",
+                valign: "center",
+            });
+            textWidth = pageWidth - logoWidth - 60;
+        } catch {
+            // Ignore logo errors, continue without logo
+        }
+    }
+
     doc.font("Helvetica-Bold")
         .fontSize(24)
         .fillColor(COLORS.headerText)
-        .text(company.name, leftX + 20, headerY + 12, { width: pageWidth - 40 });
+        .text(company.name, textLeft, headerY + 12, { width: textWidth });
 
     doc.font("Helvetica")
         .fontSize(9)
@@ -393,10 +415,27 @@ function drawFooter(
         .fillColor(COLORS.textDark)
         .text("Authorized Signatory", startX, sigY + 45);
 
-    doc.font("Helvetica")
-        .fontSize(8)
-        .fillColor(COLORS.textMuted)
-        .text(data.ownerName || "", startX, sigY + 58);
+    let contactY = sigY + 58;
+    if (company.contactPersonName) {
+        doc.font("Helvetica-Bold")
+            .fontSize(8)
+            .fillColor(COLORS.textDark)
+            .text(company.contactPersonName, startX, contactY);
+        contactY += 12;
+    }
+    if (company.contactPersonPhone) {
+        doc.font("Helvetica")
+            .fontSize(8)
+            .fillColor(COLORS.textMuted)
+            .text(`Ph: ${company.contactPersonPhone}`, startX, contactY);
+        contactY += 12;
+    }
+    if (!company.contactPersonName && data.ownerName) {
+        doc.font("Helvetica")
+            .fontSize(8)
+            .fillColor(COLORS.textMuted)
+            .text(data.ownerName, startX, contactY);
+    }
 
     // Bottom bars
     doc.rect(0, doc.page.height - 9, doc.page.width, 3).fill(COLORS.accentGold);
