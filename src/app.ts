@@ -10,6 +10,7 @@ app.use(
             "https://hoppscotch.io",
             "https://app.hoppscotch.io",
             "http://localhost:3000",
+            "http://localhost:3001",
         ],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
@@ -40,6 +41,7 @@ import clientRoutes from "./routes/client.routes";
 import itemHistoryRoutes from "./routes/itemHistory.routes";
 import companyProfileRoutes from "./routes/companyProfile.routes";
 import { staffRoutes } from "./routes/staff.routes";
+import { notificationRoutes } from "./routes/notification.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -57,6 +59,7 @@ app.use("/api/v1/client", clientRoutes);
 app.use("/api/v1/item-history", itemHistoryRoutes);
 app.use("/api/v1/company-profile", companyProfileRoutes);
 app.use("/api/v1/staff", staffRoutes);
+app.use("/api/v1/notification", notificationRoutes);
 
 // Health check endpoint
 app.get("/health", (req: Request, res: Response) => {
