@@ -1,15 +1,3 @@
-// Polyfill browser APIs required by pdfjs-dist (used by pdf-parse) in Node.js
-const g = globalThis as Record<string, unknown>;
-if (!g["DOMMatrix"]) {
-    g["DOMMatrix"] = class DOMMatrix {};
-}
-if (!g["ImageData"]) {
-    g["ImageData"] = class ImageData {};
-}
-if (!g["Path2D"]) {
-    g["Path2D"] = class Path2D {};
-}
-
 import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 

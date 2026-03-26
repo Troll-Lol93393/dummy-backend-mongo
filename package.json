@@ -4,9 +4,9 @@
     "description": "Express TypeScript backend with MongoDB",
     "main": "dist/index.js",
     "scripts": {
-        "start": "node dist/index.js",
+        "start": "node --require ./dist/polyfills.js dist/index.js",
         "dev": "nodemon src/index.ts",
-        "build": "tsc",
+        "build": "npm install --include=dev && tsc",
         "build:watch": "tsc --watch",
         "clean": "rimraf dist",
         "format": "prettier --write \"src/**/*.{ts,js,json}\"",
@@ -20,6 +20,9 @@
     ],
     "author": "",
     "license": "ISC",
+    "engines": {
+        "node": ">=20.0.0"
+    },
     "dependencies": {
         "@anthropic-ai/sdk": "^0.80.0",
         "@types/pdfkit": "^0.17.5",
@@ -34,7 +37,6 @@
         "exceljs": "^4.4.0",
         "express": "^4.18.2",
         "jsonwebtoken": "^9.0.2",
-        "libreoffice-convert": "^1.8.1",
         "mammoth": "^1.12.0",
         "mongoose": "^8.0.3",
         "multer": "^2.0.1",
@@ -64,7 +66,6 @@
         "@types/word-extractor": "^1.0.6",
         "nodemon": "^3.0.2",
         "prettier": "^3.6.2",
-        "ts-node": "^10.9.1",
         "tsx": "^4.21.0",
         "typescript": "^5.3.3"
     }
