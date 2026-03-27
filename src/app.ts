@@ -15,6 +15,7 @@ app.use(
             "https://app.hoppscotch.io",
             "http://localhost:3000",
             "http://localhost:3001",
+            "https://sheth-engg-frontend-dev.vercel.app",
         ],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
