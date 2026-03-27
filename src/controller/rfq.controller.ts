@@ -4,6 +4,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/apiResponse";
 import { RFQ } from "../models/rfq.models";
 import { Costing } from "../models/costing.model";
+import { RFQItems } from "../models/rfqItems.model";
 
 export const createRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { prNumber, startDate, dueDate, ownerName, companyName, items, location } = req.body;
@@ -85,10 +86,32 @@ export const getRFQs = asyncHandler(async (req: Request, res: Response, next: Ne
         costingCountByRfq.set(key, (costingCountByRfq.get(key) ?? 0) + 1);
     }
 
-    const enriched = rfqs.map(r => ({
-        ...r,
-        quotedItemCount: costingCountByRfq.get(String(r._id)) ?? 0,
-    }));
+    // Count regretted items per RFQ
+    const allRfqItemIds = rfqs.flatMap(r =>
+        ((r.items as unknown as { _id: string }[]) ?? []).map(i =>
+            typeof i === "object" ? String(i._id) : String(i)
+        )
+    );
+    const regrettedItems = await RFQItems.find({
+        _id: { $in: allRfqItemIds },
+        isDeleted: false,
+        isRegret: true,
+    })
+        .select("_id")
+        .lean();
+    const regrettedItemIdSet = new Set(regrettedItems.map(ri => String(ri._id)));
+
+    const enriched = rfqs.map(r => {
+        const itemIds = ((r.items as unknown as { _id: string }[]) ?? []).map(i =>
+            typeof i === "object" ? String(i._id) : String(i)
+        );
+        const regrettedItemCount = itemIds.filter(id => regrettedItemIdSet.has(id)).length;
+        return {
+            ...r,
+            quotedItemCount: costingCountByRfq.get(String(r._id)) ?? 0,
+            regrettedItemCount,
+        };
+    });
 
     res.status(200).json(
         new ApiResponse(200, {
@@ -151,10 +174,36 @@ export const markAsQuoted = asyncHandler(async (req: Request, res: Response, nex
         throw new ApiError(404, "RFQ not found");
     }
 
-    // Check that at least 1 item has costing
+    // Count non-deleted items and regretted items
+    const rfqItemIds = (rfq.items as unknown as string[]) ?? [];
+    const totalItems = await RFQItems.countDocuments({
+        _id: { $in: rfqItemIds },
+        isDeleted: false,
+    });
+    const regrettedCount = await RFQItems.countDocuments({
+        _id: { $in: rfqItemIds },
+        isDeleted: false,
+        isRegret: true,
+    });
+
+    if (regrettedCount >= totalItems) {
+        throw new ApiError(
+            400,
+            "All items are regretted. Use RFQ-level regret instead."
+        );
+    }
+
+    // Remaining non-regretted items must all have costings
     const costingCount = await Costing.countDocuments({ rfq: rfq._id, isDeleted: false });
+    const expectedCostings = totalItems - regrettedCount;
     if (costingCount === 0) {
         throw new ApiError(400, "Cannot mark as quoted — at least one item must have costing. Use 'Mark as Regret' instead.");
+    }
+    if (costingCount < expectedCostings) {
+        throw new ApiError(
+            400,
+            `Cannot mark as quoted — ${expectedCostings - costingCount} non-regretted item(s) still need costing.`
+        );
     }
 
     if (!rfq.isQuoted) {

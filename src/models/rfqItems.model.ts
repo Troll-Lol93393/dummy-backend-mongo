@@ -11,6 +11,10 @@ export interface RFQItems {
     drawingUrl?: string;
     itemTechSpecs: ItemTechSpecs;
     commercialSpecs: CommercialSpecs;
+    isRegret: boolean;
+    regretReason?: string;
+    regretReasonCustom?: string;
+    regretDate?: Date;
     isDeleted: boolean;
 }   
 
@@ -46,6 +50,23 @@ export const RfqItemsSchema: Schema<RFQItems> = new Schema(
         commercialSpecs: {
             type: Schema.Types.ObjectId,
             ref: "CommercialSpecs",
+        },
+        isRegret: {
+            type: Boolean,
+            default: false,
+        },
+        regretReason: {
+            type: String,
+            enum: ["NOT_IN_SCOPE", "DRAWING_NOT_RECEIVED", "ITEM_NOT_AVAILABLE", "CUSTOM", ""],
+            default: "",
+        },
+        regretReasonCustom: {
+            type: String,
+            trim: true,
+            default: "",
+        },
+        regretDate: {
+            type: Date,
         },
         isDeleted: {
             type: Boolean,

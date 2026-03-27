@@ -30,6 +30,8 @@ export interface ISnapshotItem {
     hardness: ISnapshotHardness[];
     remarks: string;
     bom: ISnapshotBomEntry[];
+    isRegret: boolean;
+    regretReason: string;
 }
 
 export interface ISnapshot {
@@ -113,6 +115,8 @@ const snapshotItemSchema = new Schema<ISnapshotItem>(
         hardness: { type: [snapshotHardnessSchema], default: [] },
         remarks: { type: String, default: "" },
         bom: { type: [snapshotBomSchema], default: [] },
+        isRegret: { type: Boolean, default: false },
+        regretReason: { type: String, default: "" },
     },
     { _id: false }
 );

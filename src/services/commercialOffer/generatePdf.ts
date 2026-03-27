@@ -14,6 +14,8 @@ interface CommercialItem {
     totalBeforeGst: number;
     gstAmount: number;
     totalWithGst: number;
+    isRegret?: boolean;
+    regretReason?: string;
 }
 
 interface CommercialOfferData {
@@ -220,8 +222,8 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: CommercialOfferData): voi
     const pageWidth = pw(doc);
     const startX = m(doc).left;
 
-    // Column widths for landscape A4
-    const cols = [35, 65, 120, 80, 40, 75, 70, 50, 80, 60, 80];
+    // Column widths for landscape A4 — added Remarks column
+    const cols = [30, 55, 95, 65, 35, 65, 60, 40, 70, 55, 70, 75];
     const headers = [
         "Sl No.",
         "Item Code",
@@ -234,6 +236,7 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: CommercialOfferData): voi
         "Total Before GST",
         "GST Amt",
         "Total with GST",
+        "Remarks",
     ];
 
     // Table header
@@ -256,18 +259,22 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: CommercialOfferData): voi
 
     // Data rows
     data.items.forEach((item, idx) => {
+        const isRegret = item.isRegret === true;
+        const remarksText = isRegret ? `REGRET: ${item.regretReason || ""}` : "—";
+
         const cellTexts = [
             item.serialNumber || String(idx + 1),
             item.itemCode,
             item.itemName,
             item.material || "—",
             String(item.quantity),
-            formatCurrency(item.sellingPrice),
+            isRegret ? "—" : formatCurrency(item.sellingPrice),
             item.hsnCode,
             `${item.gstPercent}%`,
-            formatCurrency(item.totalBeforeGst),
-            formatCurrency(item.gstAmount),
-            formatCurrency(item.totalWithGst),
+            isRegret ? "—" : formatCurrency(item.totalBeforeGst),
+            isRegret ? "—" : formatCurrency(item.gstAmount),
+            isRegret ? "—" : formatCurrency(item.totalWithGst),
+            remarksText,
         ];
 
         const rowHeight = calculateRowHeight(doc, cellTexts, cols, 7);
@@ -283,10 +290,11 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: CommercialOfferData): voi
 
         xPos = startX;
         cellTexts.forEach((text, i) => {
-            const align = i >= 4 ? "right" : "left";
-            doc.font(i === 0 ? "Helvetica-Bold" : "Helvetica")
+            const align = i >= 4 && i < 11 ? "right" : "left";
+            const isRegretRemarks = i === 11 && isRegret;
+            doc.font(i === 0 || isRegretRemarks ? "Helvetica-Bold" : "Helvetica")
                 .fontSize(7)
-                .fillColor(COLORS.textDark)
+                .fillColor(isRegretRemarks ? COLORS.accent : COLORS.textDark)
                 .text(text, xPos + 2, y + 4, { width: cols[i]! - 4, align });
             xPos += cols[i]!;
         });

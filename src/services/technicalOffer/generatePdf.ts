@@ -33,6 +33,8 @@ interface TechOfferItem {
     hardness: HardnessEntry[];
     remarks: string;
     bom: BomEntry[];
+    isRegret?: boolean;
+    regretReason?: string;
 }
 
 interface TechOfferData {
@@ -313,9 +315,10 @@ function drawItemsTable(doc: PDFKit.PDFDocument, data: TechOfferData): void {
 
         xPos = startX;
         cellTexts.forEach((text, i) => {
-            doc.font(i === 0 ? "Helvetica-Bold" : "Helvetica")
+            const isRegretRemarks = i === 7 && item.isRegret === true;
+            doc.font(i === 0 || isRegretRemarks ? "Helvetica-Bold" : "Helvetica")
                 .fontSize(7)
-                .fillColor(COLORS.textDark)
+                .fillColor(isRegretRemarks ? COLORS.accent : COLORS.textDark)
                 .text(text, xPos + 3, y + 4, { width: cols[i]! - 6, align: "left" });
             xPos += cols[i]!;
         });

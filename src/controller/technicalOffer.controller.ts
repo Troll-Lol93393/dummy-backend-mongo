@@ -55,6 +55,9 @@ interface PopulatedRfqItem {
     drawingNumber?: string;
     itemTechSpecs?: PopulatedTechSpecs;
     isDeleted: boolean;
+    isRegret?: boolean;
+    regretReason?: string;
+    regretReasonCustom?: string;
 }
 
 // ── Build snapshot from populated RFQ ──
@@ -91,15 +94,39 @@ async function buildSnapshotFromRfq(rfq: Record<string, unknown>): Promise<ISnap
         }
     }
 
+    const REGRET_REASON_LABELS: Record<string, string> = {
+        NOT_IN_SCOPE: "Not in our scope",
+        DRAWING_NOT_RECEIVED: "Drawing not received",
+        ITEM_NOT_AVAILABLE: "Item not available",
+    };
+
     const items = validItems.map((li, idx) => {
         const item = li.item;
         const techSpecs = li.itemTechSpecs;
         const isSetOrAssembly = item.itemType === "SET" || item.itemType === "ASSEMBLY";
+        const isRegret = li.isRegret === true;
+
+        // Human-readable regret reason
+        let regretReasonText = "";
+        if (isRegret) {
+            if (li.regretReason === "CUSTOM") {
+                regretReasonText = li.regretReasonCustom || "Custom reason";
+            } else {
+                regretReasonText =
+                    REGRET_REASON_LABELS[li.regretReason ?? ""] ?? li.regretReason ?? "";
+            }
+        }
 
         // Build auto-generated remarks
         const remarkParts: string[] = [];
+
+        // For regretted items, override remarks with regret reason
+        if (isRegret) {
+            remarkParts.push(`REGRET: ${regretReasonText}`);
+        }
+
         const userRemarks = techSpecs?.remarks ?? "";
-        if (userRemarks) {
+        if (!isRegret && userRemarks) {
             remarkParts.push(userRemarks);
         }
 
@@ -140,6 +167,8 @@ async function buildSnapshotFromRfq(rfq: Record<string, unknown>): Promise<ISnap
                 measurement: h.measurement,
             })),
             remarks: finalRemarks,
+            isRegret,
+            regretReason: regretReasonText,
             bom: isSetOrAssembly
                 ? (item.bom ?? []).map(b => ({
                       partName: b.partName,
