@@ -6,6 +6,7 @@ import { Item } from "../models/item.model";
 import { RFQItems } from "../models/rfqItems.model";
 import { ItemTechSpecs } from "../models/item.techSpecs.model";
 import { CommercialSpecs } from "../models/item.commercial.model";
+import { Costing } from "../models/costing.model";
 
 export const createRfqItems = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { itemCode, itemName, itemDesc, itemType, drawingNumber, drawingUrl, quantity } = req.body;
@@ -209,3 +210,63 @@ export const getAllRfqItems = asyncHandler(async (req: Request, res: Response, n
         data: rfqItems,
     });
 });
+
+const VALID_REGRET_REASONS = ["NOT_IN_SCOPE", "DRAWING_NOT_RECEIVED", "ITEM_NOT_AVAILABLE", "CUSTOM"];
+
+export const markRfqItemRegret = asyncHandler(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const { rfqItemId } = req.params;
+        const { isRegret, regretReason, regretReasonCustom } = req.body;
+
+        const rfqItem = await RFQItems.findOne({ _id: rfqItemId, isDeleted: false });
+        if (!rfqItem) {
+            throw new ApiError(404, "RFQ Item not found");
+        }
+
+        if (isRegret === true) {
+            // Guard: item must not have an active costing
+            const costingExists = await Costing.exists({
+                rfqItem: rfqItemId,
+                isDeleted: false,
+            });
+            if (costingExists) {
+                throw new ApiError(
+                    400,
+                    "Cannot regret an item that has costing. Delete the costing first."
+                );
+            }
+
+            if (!regretReason || !VALID_REGRET_REASONS.includes(regretReason)) {
+                throw new ApiError(
+                    400,
+                    "Valid regretReason is required: NOT_IN_SCOPE, DRAWING_NOT_RECEIVED, ITEM_NOT_AVAILABLE, or CUSTOM"
+                );
+            }
+
+            if (regretReason === "CUSTOM" && (!regretReasonCustom || !regretReasonCustom.trim())) {
+                throw new ApiError(400, "Custom regret reason text is required when reason is CUSTOM");
+            }
+
+            rfqItem.isRegret = true;
+            rfqItem.regretReason = regretReason;
+            rfqItem.regretReasonCustom = regretReason === "CUSTOM" ? regretReasonCustom.trim() : "";
+            rfqItem.regretDate = new Date();
+        } else {
+            // Undo regret
+            rfqItem.isRegret = false;
+            rfqItem.regretReason = "";
+            rfqItem.regretReasonCustom = "";
+            rfqItem.regretDate = undefined;
+        }
+
+        await rfqItem.save();
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                rfqItem,
+                isRegret ? "Item marked as regret" : "Item regret undone"
+            )
+        );
+    }
+);

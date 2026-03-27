@@ -700,6 +700,82 @@ export async function generateCostingSheetExcel(
     }
 
     // ══════════════════════════════════════
+    // REGRETTED ITEMS
+    // ══════════════════════════════════════
+    if (data.regrettedItems && data.regrettedItems.length > 0) {
+        row++; // spacing
+
+        // Section header
+        ws.mergeCells(`A${row}:L${row}`);
+        const regretHeaderCell = ws.getCell(`A${row}`);
+        regretHeaderCell.value = `Regretted Items (${data.regrettedItems.length})`;
+        regretHeaderCell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "C0392B" } };
+        regretHeaderCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FEF2F2" } };
+        regretHeaderCell.border = thinBorder("E8BABA");
+        ws.getRow(row).height = 22;
+        row++;
+
+        // Table header
+        const regretHeaders = ["#", "Item Code", "Item Name", "Qty", "Remarks"];
+        const regretColSpans = [
+            [1, 1], // A
+            [2, 3], // B-C
+            [4, 7], // D-G
+            [8, 8], // H
+            [9, 12], // I-L
+        ];
+        regretColSpans.forEach(([start, end], i) => {
+            if (start !== end) {
+                const startCol = String.fromCharCode(64 + start!);
+                const endCol = String.fromCharCode(64 + end!);
+                ws.mergeCells(`${startCol}${row}:${endCol}${row}`);
+            }
+            const cell = ws.getRow(row).getCell(start!);
+            cell.value = regretHeaders[i];
+            cell.font = { name: "Calibri", size: 9, bold: true, color: { argb: "FFFFFF" } };
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+            cell.border = thinBorder();
+            cell.alignment = { horizontal: "center", vertical: "middle" };
+        });
+        ws.getRow(row).height = 18;
+        row++;
+
+        // Data rows
+        data.regrettedItems.forEach((ri, idx) => {
+            const bgColor = idx % 2 === 0 ? "FFF5F5" : "FFFFFF";
+            const vals = [
+                ri.serialNumber || String(idx + 1),
+                ri.itemCode,
+                ri.itemName,
+                String(ri.quantity),
+                `REGRET: ${ri.regretReason}`,
+            ];
+
+            regretColSpans.forEach(([start, end], i) => {
+                if (start !== end) {
+                    const startCol = String.fromCharCode(64 + start!);
+                    const endCol = String.fromCharCode(64 + end!);
+                    ws.mergeCells(`${startCol}${row}:${endCol}${row}`);
+                }
+                const cell = ws.getRow(row).getCell(start!);
+                cell.value = vals[i];
+                const isRemarks = i === 4;
+                cell.font = {
+                    name: "Calibri",
+                    size: 9,
+                    bold: isRemarks,
+                    ...(isRemarks ? { color: { argb: "C0392B" } } : {}),
+                };
+                cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgColor } };
+                cell.border = thinBorder();
+                cell.alignment = { vertical: "middle", wrapText: true };
+            });
+            ws.getRow(row).height = 18;
+            row++;
+        });
+    }
+
+    // ══════════════════════════════════════
     // GRAND TOTAL
     // ══════════════════════════════════════
     ws.mergeCells(`A${row}:L${row}`);

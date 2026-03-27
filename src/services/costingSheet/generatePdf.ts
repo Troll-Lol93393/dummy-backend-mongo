@@ -61,6 +61,14 @@ interface CostingItem {
     totalCost: number;
 }
 
+export interface RegrettedItem {
+    serialNumber: string;
+    itemCode: string;
+    itemName: string;
+    quantity: number;
+    regretReason: string;
+}
+
 export interface CostingSheetData {
     prNumber: string;
     companyName: string;
@@ -68,6 +76,7 @@ export interface CostingSheetData {
     generatedDate: string;
     items: CostingItem[];
     grandTotal: number;
+    regrettedItems?: RegrettedItem[];
 }
 
 // ── Colors ──
@@ -91,6 +100,7 @@ const C = {
     labourHeaderBg: "#334155",
     labourRowEven: "#f8fafc",
     labourRowOdd: "#f1f5f9",
+    accentBg: "#fef2f2",
     pricingBg: "#fefce8",
     pricingBorder: "#fbbf24",
     summaryBg: "#fffbeb",
@@ -222,6 +232,10 @@ export function generateCostingSheetPdf(
     data.items.forEach((item, idx) => {
         drawItemSection(doc, item, idx);
     });
+
+    if (data.regrettedItems && data.regrettedItems.length > 0) {
+        drawRegrettedItems(doc, data.regrettedItems);
+    }
 
     drawGrandTotal(doc, data);
     drawFooter(doc);
@@ -613,6 +627,73 @@ function buildDimensionStr(part: CostingPart): string {
     if (part.innerDiameter && part.innerDiameter > 0) dims.push(`ID ${part.innerDiameter}`);
     if (part.length && part.length > 0) dims.push(`L ${part.length}`);
     return dims.length > 0 ? dims.join(" x ") + " mm" : "—";
+}
+
+function drawRegrettedItems(doc: PDFKit.PDFDocument, regrettedItems: RegrettedItem[]) {
+    const pageWidth = pw(doc);
+    const x = mg(doc).left;
+
+    checkPageBreak(doc, 40);
+    let y = doc.y + 8;
+
+    // Section header
+    doc.rect(x, y, pageWidth, 22).fill(C.accentBg);
+    doc.rect(x, y, 4, 22).fill("#c0392b");
+    doc.font("Helvetica-Bold")
+        .fontSize(10)
+        .fillColor("#c0392b")
+        .text(`Regretted Items (${regrettedItems.length})`, x + 14, y + 5, { width: pageWidth - 20 });
+    y += 26;
+    doc.y = y;
+
+    // Table header
+    const cols = [30, 60, 120, 40, pageWidth - 250];
+    const headers = ["#", "Item Code", "Item Name", "Qty", "Remarks"];
+
+    checkPageBreak(doc, 20);
+    y = doc.y;
+    doc.rect(x, y, pageWidth, 18).fill(C.navy);
+    let xPos = x;
+    headers.forEach((header, i) => {
+        doc.font("Helvetica-Bold")
+            .fontSize(7.5)
+            .fillColor("#FFFFFF")
+            .text(header, xPos + 3, y + 4, { width: cols[i]! - 6, align: "left" });
+        xPos += cols[i]!;
+    });
+    y += 18;
+    doc.y = y;
+
+    // Data rows
+    regrettedItems.forEach((item, idx) => {
+        checkPageBreak(doc, 20);
+        y = doc.y;
+
+        const bgColor = idx % 2 === 0 ? "#FFF5F5" : "#FFFFFF";
+        doc.rect(x, y, pageWidth, 18).fill(bgColor);
+        doc.rect(x, y, pageWidth, 18).strokeColor(C.border).lineWidth(0.3).stroke();
+
+        const cellTexts = [
+            item.serialNumber || String(idx + 1),
+            item.itemCode,
+            item.itemName,
+            String(item.quantity),
+            `REGRET: ${item.regretReason}`,
+        ];
+
+        xPos = x;
+        cellTexts.forEach((text, i) => {
+            const isRemarks = i === 4;
+            doc.font(isRemarks ? "Helvetica-Bold" : "Helvetica")
+                .fontSize(7)
+                .fillColor(isRemarks ? "#c0392b" : C.textDark)
+                .text(text, xPos + 3, y + 4, { width: cols[i]! - 6, align: "left" });
+            xPos += cols[i]!;
+        });
+
+        y += 18;
+        doc.y = y;
+    });
 }
 
 function drawGrandTotal(doc: PDFKit.PDFDocument, data: CostingSheetData) {

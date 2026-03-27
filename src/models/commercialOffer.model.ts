@@ -14,6 +14,8 @@ export interface ICommercialSnapshotItem {
     totalBeforeGst: number;
     gstAmount: number;
     totalWithGst: number;
+    isRegret: boolean;
+    regretReason: string;
 }
 
 export interface ICommercialSnapshot {
@@ -78,6 +80,8 @@ const snapshotItemSchema = new Schema<ICommercialSnapshotItem>(
         totalBeforeGst: { type: Number, default: 0 },
         gstAmount: { type: Number, default: 0 },
         totalWithGst: { type: Number, default: 0 },
+        isRegret: { type: Boolean, default: false },
+        regretReason: { type: String, default: "" },
     },
     { _id: false }
 );

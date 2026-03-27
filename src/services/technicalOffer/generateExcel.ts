@@ -32,6 +32,8 @@ interface TechOfferItem {
     hardness: HardnessEntry[];
     remarks: string;
     bom: BomEntry[];
+    isRegret?: boolean;
+    regretReason?: string;
 }
 
 interface TechOfferData {
@@ -248,7 +250,13 @@ export async function generateTechOfferExcel(
         values.forEach((v, i) => {
             const cell = dataRow.getCell(i + 1);
             cell.value = v;
-            cell.font = { name: "Calibri", size: 9, bold: i === 0 };
+            const isRegretRemarks = i === 7 && item.isRegret === true;
+            cell.font = {
+                name: "Calibri",
+                size: 9,
+                bold: i === 0 || isRegretRemarks,
+                ...(isRegretRemarks ? { color: { argb: "C0392B" } } : {}),
+            };
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgColor } };
             cell.alignment = {
                 horizontal: i === 6 ? "center" : "left",
