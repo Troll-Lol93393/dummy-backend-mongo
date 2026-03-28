@@ -8,15 +8,17 @@ import { logger } from "./utils/logger";
 import { AuditLog } from "./models/auditLog.model";
 
 const app: Application = express();
+const corsOrigins = [
+    "https://hoppscotch.io",
+    "https://app.hoppscotch.io",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://sheth-engg-frontend-dev.vercel.app",
+    ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map(s => s.trim()) : []),
+];
 app.use(
     cors({
-        origin: [
-            "https://hoppscotch.io",
-            "https://app.hoppscotch.io",
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "https://sheth-engg-frontend-dev.vercel.app",
-        ],
+        origin: corsOrigins,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
         exposedHeaders: ["Content-Disposition"],

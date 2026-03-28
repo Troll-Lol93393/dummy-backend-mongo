@@ -30,7 +30,8 @@ export async function downloadAribaDocSync(
 
     let browser: any;
     try {
-        browser = await puppeteerModule.default.launch({
+        // Detect system Chrome for cloud deployment (Render, etc.)
+        const launchOptions: any = {
             headless: "new",
             args: [
                 "--no-sandbox",
@@ -38,8 +39,15 @@ export async function downloadAribaDocSync(
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
                 "--disable-popup-blocking",
+                "--single-process",
+                "--no-zygote",
             ],
-        });
+        };
+        // Use PUPPETEER_EXECUTABLE_PATH if set (Render/Docker with system Chrome)
+        if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+            launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+        }
+        browser = await puppeteerModule.default.launch(launchOptions);
 
         const page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
