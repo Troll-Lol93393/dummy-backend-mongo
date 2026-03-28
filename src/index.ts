@@ -4,6 +4,7 @@ dotenv.config({ path: "./.env" });
 import dbConnect from "./config/dbConnect";
 import { app } from "./app";
 import { startRfqScheduler } from "./cron/rfqScheduler";
+import { startEmailScheduler } from "./cron/emailScheduler";
 import { logger } from "./utils/logger";
 import { AuditLog } from "./models/auditLog.model";
 
@@ -111,6 +112,7 @@ dbConnect()
 
         // Start cron jobs after DB is connected
         startRfqScheduler();
+        startEmailScheduler();
     })
     .catch(err => {
         logger.critical("DATABASE", "MongoDB connection failed", {

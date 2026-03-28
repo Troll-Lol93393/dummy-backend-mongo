@@ -11,6 +11,7 @@ import { RFQ } from "../models/rfq.models";
 import { RFQItems } from "../models/rfqItems.model";
 import { ItemTechSpecs } from "../models/item.techSpecs.model";
 import { CommercialSpecs } from "../models/item.commercial.model";
+import { Email } from "../models/email.model";
 import { uploadFileToCloudinary } from "../utils/cloudinary";
 
 // POST /api/v1/rfp-extract/upload
@@ -82,6 +83,7 @@ export const confirmAndSave = asyncHandler(
             dueDate,
             ownerName,
             items,
+            emailId,
         } = req.body;
 
         if (!prNumber || !location || !companyName) {
@@ -174,6 +176,11 @@ export const confirmAndSave = asyncHandler(
             updatedBy: req.user?._id?.toString() || "",
         });
 
+        // Auto-link email to RFQ if emailId provided
+        if (emailId) {
+            await Email.findByIdAndUpdate(emailId, { linkedRfq: rfq._id });
+        }
+
         // Populate the RFQ with items for response
         const populatedRfq = await RFQ.findById(rfq._id).populate({
             path: "items",
@@ -227,6 +234,7 @@ export const bulkUploadAndExtract = asyncHandler(
                         supplyType: "",
                         location: "",
                         companyName: "",
+                        dueDate: "",
                         items: [],
                         rawText: "",
                     },
@@ -275,6 +283,7 @@ export const bulkUploadAndExtract = asyncHandler(
                         supplyType: "",
                         location: "",
                         companyName: "",
+                        dueDate: "",
                         items: [],
                         rawText: "",
                     },
