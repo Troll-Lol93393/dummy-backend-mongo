@@ -8,6 +8,7 @@ export interface ParsedRfpData {
     supplyType: string;
     location: string;
     companyName: string;
+    dueDate: string;
     items: ParsedItem[];
     rawText: string;
 }
@@ -48,13 +49,38 @@ async function extractTextFromPdf(filePath: string): Promise<string> {
     return result.text;
 }
 
+// Extract text from HTML file by stripping tags
+function extractTextFromHtml(filePath: string): string {
+    const html = fs.readFileSync(filePath, "utf8");
+    // Remove script and style blocks, then strip tags
+    return html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 // Extract text from file based on extension
 export async function extractTextFromFile(filePath: string): Promise<string> {
     const ext = path.extname(filePath).toLowerCase();
     if (ext === ".doc" || ext === ".docx") {
+        // Check if the file is actually HTML (Ariba "Print Event Information" saves as .doc but is HTML)
+        const head = fs.readFileSync(filePath, "utf8").substring(0, 100);
+        if (head.includes("<!DOCTYPE") || head.includes("<html")) {
+            return extractTextFromHtml(filePath);
+        }
         return extractTextFromDoc(filePath);
     } else if (ext === ".pdf") {
         return extractTextFromPdf(filePath);
+    } else if (ext === ".html" || ext === ".htm") {
+        return extractTextFromHtml(filePath);
     }
     throw new Error(`Unsupported file type: ${ext}`);
 }
@@ -101,6 +127,7 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
         supplyType: filenameMeta.supplyType,
         location: filenameMeta.location,
         companyName: "",
+        dueDate: "",
         items: [],
         rawText,
     };
@@ -129,6 +156,14 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
         if (locationMatch) {
             data.location = locationMatch[1]?.trim() ?? "";
         }
+    }
+
+    // Extract due date
+    const dueDateMatch = rawText.match(
+        /(?:Due\s*date|Deadline|Response\s*Due|Closing\s*Date|End\s*Date)\s*[:\s]*(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i
+    );
+    if (dueDateMatch) {
+        data.dueDate = dueDateMatch[1]?.trim() ?? "";
     }
 
     // Extract item details from text
@@ -352,6 +387,7 @@ export async function parseRfpDocument(
                 supplyType: "",
                 location: "",
                 companyName: "",
+                dueDate: "",
                 items: [],
                 rawText: "",
             },
