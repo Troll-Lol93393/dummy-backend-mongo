@@ -8,6 +8,7 @@ import {
     markAsQuoted,
     markAsRegret,
 } from "../controller/rfq.controller";
+import { getPendingSummary, markReviewed } from "../controller/pendingRfq.controller";
 import { upload } from "../middlewares/multer.middleware";
 import { verifyJWT } from "../middlewares/auth.middleware";
 
@@ -15,6 +16,10 @@ export const rfqRoutes = Router();
 
 // All RFQ routes require authentication
 rfqRoutes.use(verifyJWT);
+
+// Pending RFQ routes (before /:rfqId to avoid param conflicts)
+rfqRoutes.get("/pending-summary", verifyJWT, getPendingSummary);
+rfqRoutes.patch("/:rfqId/mark-reviewed", verifyJWT, markReviewed);
 
 // Public authenticated routes
 rfqRoutes.get("/all", verifyJWT, getRFQs);

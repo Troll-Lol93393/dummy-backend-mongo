@@ -52,8 +52,28 @@ export const getAllEmails = asyncHandler(async (req: Request, res: Response) => 
     if (req.query.isArchived === "true") filter.isArchived = true;
     else filter.isArchived = false;
 
-    // Date range
-    if (req.query.from || req.query.to) {
+    // Period filter (synced with stats bar)
+    if (req.query.period === "today") {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        filter.date = { $gte: start };
+    } else if (req.query.period === "yesterday") {
+        const start = new Date();
+        start.setDate(start.getDate() - 1);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(0, 0, 0, 0);
+        filter.date = { $gte: start, $lt: end };
+    } else if (req.query.period === "week") {
+        // Business week: Sunday 00:00 to Saturday 00:00 (midnight)
+        const now = new Date();
+        const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+        const lastSunday = new Date(now);
+        lastSunday.setDate(now.getDate() - day);
+        lastSunday.setHours(0, 0, 0, 0);
+        filter.date = { $gte: lastSunday };
+    } else if (req.query.from || req.query.to) {
+        // Custom date range
         const dateFilter: Record<string, Date> = {};
         if (req.query.from) dateFilter.$gte = new Date(req.query.from as string);
         if (req.query.to) dateFilter.$lte = new Date(req.query.to as string);
@@ -104,37 +124,32 @@ export const getUnreadCount = asyncHandler(async (_req: Request, res: Response) 
 
 export const getEmailStats = asyncHandler(async (req: Request, res: Response) => {
     const period = req.query.period as string;
-    const dateFilter: Record<string, Date> = {};
+    const match: Record<string, unknown> = { isDeleted: false };
 
     if (period === "today") {
         const start = new Date();
         start.setHours(0, 0, 0, 0);
-        dateFilter.$gte = start;
+        match.date = { $gte: start };
+    } else if (period === "yesterday") {
+        const start = new Date();
+        start.setDate(start.getDate() - 1);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(0, 0, 0, 0);
+        match.date = { $gte: start, $lt: end };
     } else if (period === "week") {
-        // Business week: Saturday 3:00 PM IST to Saturday 3:00 PM IST
-        // IST = UTC+5:30, so 3:00 PM IST = 9:30 AM UTC
+        // Business week: Sunday 00:00 to Saturday 00:00 (midnight)
         const now = new Date();
         const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-        // Days since last Saturday
-        const daysSinceSat = day === 6 ? 0 : day + 1;
-        const lastSat = new Date(now);
-        lastSat.setUTCDate(now.getUTCDate() - daysSinceSat);
-        lastSat.setUTCHours(9, 30, 0, 0); // 3:00 PM IST = 9:30 UTC
-        // If we're on Saturday but before 3:00 PM IST, go back one more week
-        if (now < lastSat) {
-            lastSat.setUTCDate(lastSat.getUTCDate() - 7);
-        }
-        dateFilter.$gte = lastSat;
+        const lastSunday = new Date(now);
+        lastSunday.setDate(now.getDate() - day);
+        lastSunday.setHours(0, 0, 0, 0);
+        match.date = { $gte: lastSunday };
     } else if (req.query.from) {
+        const dateFilter: Record<string, Date> = {};
         dateFilter.$gte = new Date(req.query.from as string);
         if (req.query.to) dateFilter.$lte = new Date(req.query.to as string);
-    }
-
-    const match: Record<string, unknown> = { isDeleted: false };
-    // Use createdAt (when synced) for today/week, date (email sent date) for custom range
-    if (Object.keys(dateFilter).length > 0) {
-        const dateField = period === "today" || period === "week" ? "createdAt" : "date";
-        match[dateField] = dateFilter;
+        match.date = dateFilter;
     }
 
     const pipeline = [
