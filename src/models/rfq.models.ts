@@ -22,6 +22,7 @@ export interface IRfq {
     items: RFQItems[];
     activeTechnicalOffer?: ITechnicalOffer;
     activeCommercialOffer?: ICommercialOffer;
+    isReviewed: boolean;
     isDeleted: boolean;
     createdBy: string;
     updatedBy: string;
@@ -119,6 +120,10 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         activeCommercialOffer: {
             type: Schema.Types.ObjectId,
             ref: "CommercialOffer",
+        },
+        isReviewed: {
+            type: Boolean,
+            default: false,
         },
         isDeleted: {
             type: Boolean,
