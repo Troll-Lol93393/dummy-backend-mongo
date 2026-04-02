@@ -88,7 +88,9 @@ export const getAllEmails = asyncHandler(async (req: Request, res: Response) => 
             { "from.name": { $regex: search, $options: "i" } },
             { "from.address": { $regex: search, $options: "i" } },
             { "classification.extractedData.prNumbers": { $regex: search, $options: "i" } },
+            { "classification.extractedData.poNumbers": { $regex: search, $options: "i" } },
             { "classification.extractedData.companyNames": { $regex: search, $options: "i" } },
+            { textBody: { $regex: search, $options: "i" } },
         ];
     }
 
