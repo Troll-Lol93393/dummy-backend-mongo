@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { syncEmails } from "../services/email/imapService";
 import { classifyUnprocessed } from "../services/email/classificationService";
 import { processAribaDownloads } from "../services/email/aribaScraperService";
+import { autoCreateRfqsFromDownloads } from "../services/email/autoRfqService";
 import { getEmailSettings } from "../models/emailSettings.model";
 
 let scheduledTask: ReturnType<typeof cron.schedule> | null = null;
@@ -36,6 +37,12 @@ export function startEmailScheduler(): void {
             const downloaded = await processAribaDownloads();
             if (downloaded > 0) {
                 console.log(`[CRON] Downloaded ${downloaded} Ariba document(s)`);
+            }
+
+            // Step 4: Auto-create RFQs from downloaded documents (PREVIEW status)
+            const autoCreated = await autoCreateRfqsFromDownloads();
+            if (autoCreated > 0) {
+                console.log(`[CRON] Auto-created ${autoCreated} RFQ(s) from downloaded documents`);
             }
         } catch (err) {
             console.error("[CRON] Email scheduler error:", err);
