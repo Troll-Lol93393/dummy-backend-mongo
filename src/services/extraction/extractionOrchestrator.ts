@@ -83,6 +83,7 @@ export async function runExtractionPipeline(
         supplyType: "",
         location: "",
         companyName: "",
+        startDate: "",
         dueDate: "",
         items: [],
         rawText,

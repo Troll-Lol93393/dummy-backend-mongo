@@ -273,6 +273,7 @@ export async function processAribaDownloads(): Promise<number> {
                 const cloudResult = await uploadFileToCloudinary(result.filePath);
                 if (cloudResult) {
                     aribaLink.downloadedDocUrl = cloudResult.secure_url;
+                    aribaLink.downloadedDocFilename = result.filename;
                     aribaLink.downloadStatus = "DOWNLOADED";
                     downloaded++;
                 } else {

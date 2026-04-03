@@ -20,7 +20,8 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation, n
     "supplyType": "string - type of supply (Revenue Supply, Capital Supply, etc)",
     "location": "string - plant/delivery location",
     "companyName": "string - vendor/company name",
-    "dueDate": "string - the due date / deadline / response end date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Due date', 'End Date', 'Deadline', or 'Closing Date' fields in the document.",
+    "startDate": "string - the response start date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Response start date', 'Start Date', or 'Open Date' fields in the document. Include the time if available.",
+    "dueDate": "string - the due date / deadline / response end date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Due date', 'End Date', 'Deadline', or 'Closing Date' fields in the document. Include the time if available.",
     "items": [
         {
             "serialNumber": "string - the section/serial number from the document (e.g. '7.3', '7.4', '7.3.1'). Look for dot-notation numbers that label each line item in the document",
@@ -57,6 +58,7 @@ export async function extractWithAI(
         supplyType: "",
         location: "",
         companyName: "",
+        startDate: "",
         dueDate: "",
         items: [],
         rawText,
@@ -203,6 +205,7 @@ function normalizeAIResponse(parsed: Record<string, unknown>, rawText: string): 
         supplyType: String(parsed.supplyType || ""),
         location: String(parsed.location || ""),
         companyName: String(parsed.companyName || ""),
+        startDate: String(parsed.startDate || ""),
         dueDate: String(parsed.dueDate || ""),
         items,
         rawText,

@@ -8,9 +8,59 @@ export interface ParsedRfpData {
     supplyType: string;
     location: string;
     companyName: string;
+    startDate: string;
     dueDate: string;
     items: ParsedItem[];
     rawText: string;
+}
+
+/**
+ * Parse date strings from Ariba documents.
+ * Ariba uses D/M/YYYY HH:mm format (day-first, 24h clock).
+ * Returns ISO 8601 string or empty string if unparseable.
+ */
+function parseAribaDate(dateStr: string): string {
+    if (!dateStr) return "";
+    dateStr = dateStr.trim();
+
+    // Try D/M/YYYY HH:mm (Ariba's format)
+    const dmyTime = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+    if (dmyTime) {
+        let [, day, month, year, hours, minutes, ampm] = dmyTime;
+        let h = parseInt(hours!, 10);
+        if (ampm) {
+            if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+            if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+        }
+        const d = new Date(parseInt(year!, 10), parseInt(month!, 10) - 1, parseInt(day!, 10), h, parseInt(minutes!, 10));
+        if (!isNaN(d.getTime())) return d.toISOString();
+    }
+
+    // Try D/M/YYYY (no time)
+    const dmy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (dmy) {
+        const d = new Date(parseInt(dmy[3]!, 10), parseInt(dmy[2]!, 10) - 1, parseInt(dmy[1]!, 10));
+        if (!isNaN(d.getTime())) return d.toISOString();
+    }
+
+    // Try M/D/YYYY HH:mm (US format fallback)
+    const mdyTime = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+    if (mdyTime) {
+        const [, month, day, year, hours, minutes, ampm] = mdyTime;
+        let h = parseInt(hours!, 10);
+        if (ampm) {
+            if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+            if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+        }
+        const d = new Date(parseInt(year!, 10), parseInt(month!, 10) - 1, parseInt(day!, 10), h, parseInt(minutes!, 10));
+        if (!isNaN(d.getTime())) return d.toISOString();
+    }
+
+    // Last resort: try native Date parser
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d.toISOString();
+
+    return "";
 }
 
 export interface ParsedItem {
@@ -142,6 +192,7 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
         supplyType: filenameMeta.supplyType,
         location: filenameMeta.location,
         companyName: "",
+        startDate: "",
         dueDate: "",
         items: [],
         rawText,
@@ -182,12 +233,20 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
         }
     }
 
+    // Extract start date (Response start date)
+    const startDateMatch = rawText.match(
+        /(?:Response\s*start\s*date|Start\s*Date|Open\s*Date|Event\s*Start)\s*[:\s]*(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i
+    );
+    if (startDateMatch) {
+        data.startDate = parseAribaDate(startDateMatch[1]?.trim() ?? "");
+    }
+
     // Extract due date
     const dueDateMatch = rawText.match(
         /(?:Due\s*date|Deadline|Response\s*Due|Closing\s*Date|End\s*Date)\s*[:\s]*(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i
     );
     if (dueDateMatch) {
-        data.dueDate = dueDateMatch[1]?.trim() ?? "";
+        data.dueDate = parseAribaDate(dueDateMatch[1]?.trim() ?? "");
     }
 
     // Extract item details from text
@@ -411,6 +470,7 @@ export async function parseRfpDocument(
                 supplyType: "",
                 location: "",
                 companyName: "",
+                startDate: "",
                 dueDate: "",
                 items: [],
                 rawText: "",

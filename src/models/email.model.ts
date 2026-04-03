@@ -30,6 +30,7 @@ export interface IEmailAttachment {
 export interface IAribaLink {
     url: string;
     downloadedDocUrl?: string;
+    downloadedDocFilename?: string;
     downloadStatus: AribaDownloadStatus;
     errorMessage?: string;
 }
@@ -88,6 +89,7 @@ const aribaLinkSchema = new Schema<IAribaLink>(
     {
         url: { type: String, required: true },
         downloadedDocUrl: { type: String },
+        downloadedDocFilename: { type: String },
         downloadStatus: {
             type: String,
             enum: ["LINK_EXTRACTED", "DOWNLOADING", "DOWNLOADED", "FAILED"],
