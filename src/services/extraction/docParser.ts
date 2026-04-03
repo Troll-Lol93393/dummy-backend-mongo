@@ -104,7 +104,7 @@ function parseFilename(filename: string): {
 
     // Try to parse the known pattern: RFP - {10digit}-{10digit}-SupplyType-LOCATION-ITEM_DESC
     const rfpMatch = nameWithoutExt.match(
-        /^RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+)-(.+)$/i
+        /^RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+(?:\s*-\s*[A-Z]+)*)-(.+)$/i
     );
 
     if (rfpMatch) {
@@ -113,6 +113,21 @@ function parseFilename(filename: string): {
         result.supplyType = rfpMatch[3]?.trim() ?? "";
         result.location = rfpMatch[4]?.trim() ?? "";
         result.itemDesc = rfpMatch[5]?.trim() ?? "";
+    }
+
+    // Also handle "RFP Templates_PR_{10digit}_{10digit}-{LOCATION}-SupplyType" pattern
+    if (!result.prNumber) {
+        const templatesMatch = nameWithoutExt.match(
+            /RFP\s+Templates[_-]PR[_-](\d{10})[_-](\d{10})[_-]([A-Z_]+)[_-](.*)/i
+        );
+        if (templatesMatch) {
+            result.prNumber = templatesMatch[1] ?? "";
+            result.location = (templatesMatch[3] ?? "").replace(/_/g, " ").trim();
+            const rest = templatesMatch[4] ?? "";
+            const supplyMatch = rest.match(/(Revenue\s+S(?:upply)?|Capital\s+S(?:upply)?)/i);
+            if (supplyMatch) result.supplyType = supplyMatch[1]?.trim() ?? "";
+            result.itemDesc = rest.replace(/(Revenue|Capital)\s+S(?:upply)?\s*/i, "").trim();
+        }
     }
 
     return result;
@@ -146,6 +161,15 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
     );
     if (companyMatch) {
         data.companyName = companyMatch[1]?.trim() ?? "";
+    }
+    // Ariba docs often have "XXX Limited has invited you" or "Buyer XXX Limited" patterns
+    if (!data.companyName) {
+        const aribaCompanyMatch = rawText.match(
+            /(\b[A-Z][A-Za-z\s]+(?:Limited|Ltd|Pvt|Inc|Corp|Steel|Industries|Group)(?:\s+(?:Limited|Ltd|Pvt))?)[\s,]/
+        );
+        if (aribaCompanyMatch) {
+            data.companyName = aribaCompanyMatch[1]?.trim() ?? "";
+        }
     }
 
     // Extract location if not from filename
