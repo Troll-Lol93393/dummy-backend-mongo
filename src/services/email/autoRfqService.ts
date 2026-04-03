@@ -85,7 +85,27 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
             );
             if (downloadedAriba?.downloadedDocUrl) {
                 fileUrl = downloadedAriba.downloadedDocUrl;
-                filename = "ariba_document.doc";
+                // Extract the RFP portion from email subject for use as filename.
+                // The AI extractor and parser both rely on the filename pattern:
+                // "RFP - {PR_NUMBER}-{SECOND_NUMBER}-{SupplyType}-{LOCATION}-{DESC}"
+                // Also handles "RFP Templates_PR_1600640809_3100891031-VJNR_STL-..."
+                const rfpMatch = email.subject.match(/RFP\s*(?:[-–—]\s*\d{10}|Templates[_-]PR[_-]\d{10}).*/i);
+                if (rfpMatch) {
+                    const sanitized = rfpMatch[0]
+                        .replace(/[<>:"/\\|?*]+/g, "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                        .substring(0, 200);
+                    filename = `${sanitized}.doc`;
+                } else {
+                    // Fallback: use full subject
+                    const sanitized = email.subject
+                        .replace(/[<>:"/\\|?*]+/g, "")
+                        .replace(/\s+/g, " ")
+                        .trim()
+                        .substring(0, 200);
+                    filename = sanitized ? `${sanitized}.doc` : "ariba_document.doc";
+                }
             }
 
             if (!fileUrl) {

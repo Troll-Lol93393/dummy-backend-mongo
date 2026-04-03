@@ -90,12 +90,22 @@ export async function runExtractionPipeline(
 
     // Try to at least parse the filename for some metadata
     const filenameMatch = originalFilename.match(
-        /^RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+)-(.+)\.(doc|docx|pdf)$/i
+        /RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+(?:\s*-\s*[A-Z]+)*)-(.+)\.(doc|docx|pdf)$/i
     );
     if (filenameMatch) {
         manualData.prNumber = filenameMatch[1] ?? "";
         manualData.supplyType = filenameMatch[3]?.trim() ?? "";
         manualData.location = filenameMatch[4]?.trim() ?? "";
+    }
+    // Also try Templates pattern
+    if (!manualData.prNumber) {
+        const templatesMatch = originalFilename.match(
+            /RFP\s+Templates[_-]PR[_-](\d{10})[_-](\d{10})[_-]([A-Z_]+)/i
+        );
+        if (templatesMatch) {
+            manualData.prNumber = templatesMatch[1] ?? "";
+            manualData.location = (templatesMatch[3] ?? "").replace(/_/g, " ").trim();
+        }
     }
 
     return {
