@@ -57,17 +57,14 @@ function downloadFileFromUrl(url: string, destPath: string): Promise<void> {
  * Skips if an RFQ with the same PR number already exists.
  */
 export async function autoCreateRfqsFromDownloads(): Promise<number> {
-    // Find emails with downloaded Ariba docs, no linked RFQ, and relevant category
+    // Find emails with downloaded Ariba docs ONLY — no linked RFQ, and relevant category
+    // We intentionally skip emails that only have attachments (no Ariba doc),
+    // because attachment data is unreliable. RFQs must be created from Ariba documents.
     const emails = await Email.find({
         isDeleted: false,
         linkedRfq: { $eq: null },
         "classification.category": { $in: AUTO_RFQ_CATEGORIES },
-        $or: [
-            { "aribaLinks.downloadStatus": "DOWNLOADED" },
-            {
-                "attachments.cloudinaryUrl": { $exists: true, $ne: "" },
-            },
-        ],
+        "aribaLinks.downloadStatus": "DOWNLOADED",
     }).limit(5);
 
     if (emails.length === 0) return 0;
@@ -76,54 +73,22 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
 
     for (const email of emails) {
         try {
-            // Find the document URL (Ariba downloaded doc first, then attachments)
-            let fileUrl: string | null = null;
-            let filename = "document";
-
+            // Only use Ariba downloaded documents — never fall back to email attachments
             const downloadedAriba = email.aribaLinks.find(
                 l => l.downloadStatus === "DOWNLOADED" && l.downloadedDocUrl
             );
-            if (downloadedAriba?.downloadedDocUrl) {
-                fileUrl = downloadedAriba.downloadedDocUrl;
-                // Extract the RFP portion from email subject for use as filename.
-                // The AI extractor and parser both rely on the filename pattern:
-                // "RFP - {PR_NUMBER}-{SECOND_NUMBER}-{SupplyType}-{LOCATION}-{DESC}"
-                // Also handles "RFP Templates_PR_1600640809_3100891031-VJNR_STL-..."
-                const rfpMatch = email.subject.match(/RFP\s*(?:[-–—]\s*\d{10}|Templates[_-]PR[_-]\d{10}).*/i);
-                if (rfpMatch) {
-                    const sanitized = rfpMatch[0]
-                        .replace(/[<>:"/\\|?*]+/g, "")
-                        .replace(/\s+/g, " ")
-                        .trim()
-                        .substring(0, 200);
-                    filename = `${sanitized}.doc`;
-                } else {
-                    // Fallback: use full subject
-                    const sanitized = email.subject
-                        .replace(/[<>:"/\\|?*]+/g, "")
-                        .replace(/\s+/g, " ")
-                        .trim()
-                        .substring(0, 200);
-                    filename = sanitized ? `${sanitized}.doc` : "ariba_document.doc";
-                }
-            }
-
-            if (!fileUrl) {
-                const docAttachment = email.attachments.find(
-                    a =>
-                        a.cloudinaryUrl &&
-                        (a.contentType === "application/pdf" ||
-                            a.contentType ===
-                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-                            a.contentType === "application/msword")
+            if (!downloadedAriba?.downloadedDocUrl) {
+                logger.warn(
+                    "AUTO-RFQ",
+                    `Skipping email ${email._id} — no downloaded Ariba document available`
                 );
-                if (docAttachment?.cloudinaryUrl) {
-                    fileUrl = docAttachment.cloudinaryUrl;
-                    filename = docAttachment.filename || "attachment.doc";
-                }
+                continue;
             }
 
-            if (!fileUrl) continue;
+            const fileUrl = downloadedAriba.downloadedDocUrl;
+            // Use the original filename from the Ariba download (stored when Puppeteer downloaded it)
+            // This preserves the RFP filename pattern that the parser relies on
+            const filename = downloadedAriba.downloadedDocFilename || "ariba_document.doc";
 
             // Download file to temp directory
             const tmpDir = path.join(os.tmpdir(), `auto_rfq_${Date.now()}_${email._id}`);
@@ -251,11 +216,16 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
             }
 
             // Create the RFQ in PREVIEW status
+            // Dates from extraction are already ISO 8601 strings (parsed from Ariba's D/M/YYYY HH:mm format)
+            const parsedStartDate = data.startDate ? new Date(data.startDate) : null;
+            const parsedDueDate = data.dueDate ? new Date(data.dueDate) : null;
             const rfq = await RFQ.create({
                 prNumber: data.prNumber,
-                startDate: new Date(),
-                dueDate: data.dueDate
-                    ? new Date(data.dueDate)
+                startDate: parsedStartDate && !isNaN(parsedStartDate.getTime())
+                    ? parsedStartDate
+                    : new Date(),
+                dueDate: parsedDueDate && !isNaN(parsedDueDate.getTime())
+                    ? parsedDueDate
                     : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
                 ownerName: "",
                 companyName: data.companyName,

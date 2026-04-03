@@ -495,11 +495,11 @@ export const downloadAndExtractFromEmail = asyncHandler(async (req: Request, res
     let fileUrl: string | null = null;
     let filename = "document";
 
-    // 1. Check if Ariba doc already downloaded
+    // 1. Check if Ariba doc already downloaded — use stored original filename
     const downloadedAriba = email.aribaLinks.find(l => l.downloadStatus === "DOWNLOADED");
     if (downloadedAriba?.downloadedDocUrl) {
         fileUrl = downloadedAriba.downloadedDocUrl;
-        filename = "ariba_document.doc";
+        filename = downloadedAriba.downloadedDocFilename || "ariba_document.doc";
     }
 
     // 2. Check email attachments
@@ -567,6 +567,7 @@ export const downloadAndExtractFromEmail = asyncHandler(async (req: Request, res
             }
 
             aribaLink.downloadedDocUrl = cloudResult.secure_url;
+            aribaLink.downloadedDocFilename = result.filename;
             aribaLink.downloadStatus = "DOWNLOADED";
             await email.save();
 
