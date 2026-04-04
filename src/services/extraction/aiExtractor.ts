@@ -1,5 +1,6 @@
 import axios from "axios";
 import { ParsedRfpData, ParsedItem } from "./docParser";
+import { retryWithBackoff } from "../../utils/retryWithBackoff";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -72,25 +73,29 @@ export async function extractWithAI(
 
         const userMessage = `FILENAME: ${originalFilename}\n\nDOCUMENT TEXT:\n${rawText}`;
 
-        const response = await axios.post(
-            GROQ_API_URL,
-            {
-                model: GROQ_MODEL,
-                messages: [
-                    { role: "system", content: SYSTEM_PROMPT },
-                    { role: "user", content: userMessage },
-                ],
-                temperature: 0.1,
-                max_tokens: 4096,
-                response_format: { type: "json_object" },
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                },
-                timeout: 60000,
-            }
+        const response = await retryWithBackoff(
+            () =>
+                axios.post(
+                    GROQ_API_URL,
+                    {
+                        model: GROQ_MODEL,
+                        messages: [
+                            { role: "system", content: SYSTEM_PROMPT },
+                            { role: "user", content: userMessage },
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 4096,
+                        response_format: { type: "json_object" },
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${apiKey}`,
+                            "Content-Type": "application/json",
+                        },
+                        timeout: 60000,
+                    }
+                ),
+            { maxRetries: 3, initialDelayMs: 2000 }
         );
 
         const aiResponse = response.data?.choices?.[0]?.message?.content;
@@ -113,6 +118,10 @@ export async function extractWithAI(
             confidence,
         };
     } catch (error: unknown) {
+        // Rethrow 429 so callers know it was a transient rate-limit failure
+        if (axios.isAxiosError(error) && error.response?.status === 429) {
+            throw error;
+        }
         const message = error instanceof Error ? error.message : "Unknown AI extraction error";
         console.error("AI extraction failed:", message);
         return { success: false, data: emptyResult, confidence: 0 };

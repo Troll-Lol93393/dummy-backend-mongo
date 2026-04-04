@@ -65,6 +65,8 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
         linkedRfq: { $eq: null },
         "classification.category": { $in: AUTO_RFQ_CATEGORIES },
         "aribaLinks.downloadStatus": "DOWNLOADED",
+        date: { $gte: new Date("2026-04-05T00:00:00.000Z") },
+        extractionFailCount: { $lt: 3 },
     }).limit(5);
 
     if (emails.length === 0) return 0;
@@ -126,15 +128,19 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
             // Need minimum data to create an RFQ
             const data = extractionResult.data;
             if (!data.prNumber || !data.location || !data.companyName) {
+                email.extractionFailCount = (email.extractionFailCount || 0) + 1;
+                await email.save();
                 logger.warn(
                     "AUTO-RFQ",
-                    `Skipping email ${email._id} — missing required fields (prNumber: ${data.prNumber || "empty"}, location: ${data.location || "empty"}, company: ${data.companyName || "empty"})`
+                    `Skipping email ${email._id} (fail #${email.extractionFailCount}) — missing required fields (prNumber: ${data.prNumber || "empty"}, location: ${data.location || "empty"}, company: ${data.companyName || "empty"})`
                 );
                 continue;
             }
 
             if (!data.items || data.items.length === 0) {
-                logger.warn("AUTO-RFQ", `Skipping email ${email._id} — no items extracted`);
+                email.extractionFailCount = (email.extractionFailCount || 0) + 1;
+                await email.save();
+                logger.warn("AUTO-RFQ", `Skipping email ${email._id} (fail #${email.extractionFailCount}) — no items extracted`);
                 continue;
             }
 

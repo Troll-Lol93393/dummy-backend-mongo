@@ -200,6 +200,13 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
             data.prNumber = prMatch[1]?.trim() ?? "";
         }
     }
+    // Fallback: find 10-digit numbers starting with 16 (Ariba PR numbers)
+    if (!data.prNumber) {
+        const prMatches = rawText.match(/\b(16\d{8})\b/g);
+        if (prMatches && prMatches.length > 0) {
+            data.prNumber = prMatches[0]!;
+        }
+    }
 
     // Extract company name from RFQ document
     // Strategy 1: Ariba docs consistently have "ShipTo {CompanyName} P.O." pattern in item sections
@@ -238,13 +245,44 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
     }
 
     // Extract location if not from filename
+    // Strategy 1: Known JSW plant locations
+    const KNOWN_LOCATIONS = [
+        "VIJAYANAGAR", "DOLVI", "SALEM", "TARAPUR", "VASIND",
+        "KALMESHWAR", "ALIBAUG", "BELLARY", "TORANAGALLU",
+    ];
+    if (!data.location) {
+        const textUpper = rawText.toUpperCase();
+        for (const loc of KNOWN_LOCATIONS) {
+            if (textUpper.includes(loc)) {
+                data.location = loc;
+                break;
+            }
+        }
+    }
+
+    // Strategy 2: ShipTo address contains location city
+    if (!data.location) {
+        const shipToLocMatch = rawText.match(
+            /ShipTo\s+.{0,100}?\b([A-Z][a-z]+(?:nagar|pur|lvi|lem|ind|war|lur)?)\b/i
+        );
+        if (shipToLocMatch) data.location = shipToLocMatch[1]?.trim() ?? "";
+    }
+
+    // Strategy 3: Labeled pattern with length cap
     if (!data.location) {
         const locationMatch = rawText.match(
-            /(?:Location|Plant|Site|Delivery\s*(?:to|at|point))[:\s]*([^\n\r]+)/i
+            /(?:Location|Plant|Site|Delivery\s*(?:to|at|point))[:\s]*([^\n\r]{1,100})/i
         );
         if (locationMatch) {
-            data.location = locationMatch[1]?.trim() ?? "";
+            const loc = locationMatch[1]?.trim() ?? "";
+            data.location = loc.length <= 100 ? loc : loc.substring(0, 100);
         }
+    }
+
+    // Extract supply type from text if not from filename
+    if (!data.supplyType) {
+        const supplyMatch = rawText.match(/\b(Revenue\s+Supply|Capital\s+Supply)\b/i);
+        if (supplyMatch) data.supplyType = supplyMatch[1]?.trim() ?? "";
     }
 
     // Extract start date (Response start date)

@@ -10,6 +10,28 @@ import os from "os";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
+ * Capture a debug screenshot on failure.
+ * Saves full-page PNG to /tmp/ariba_debug_screenshots/.
+ */
+async function captureDebugScreenshot(
+    page: any,
+    label: string
+): Promise<string | null> {
+    try {
+        const dir = path.join(os.tmpdir(), "ariba_debug_screenshots");
+        fs.mkdirSync(dir, { recursive: true });
+        const filename = `ariba_fail_${label}_${Date.now()}.png`;
+        const screenshotPath = path.join(dir, filename);
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        logger.info("ARIBA", `Debug screenshot saved: ${screenshotPath}`);
+        return screenshotPath;
+    } catch (err) {
+        logger.warn("ARIBA", `Failed to capture debug screenshot: ${err}`);
+        return null;
+    }
+}
+
+/**
  * Core Puppeteer download logic — reusable by both cron and synchronous endpoint.
  * Launches browser, navigates to Ariba URL, logs in, downloads file.
  * Returns local file path + filename. Caller handles upload/DB updates.
@@ -157,27 +179,50 @@ export async function downloadAribaDocSync(
         })()`);
 
         if (btnCoords) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            await page.mouse.click(btnCoords.x, btnCoords.y);
-            logger.info("ARIBA", `Clicked 'Print Event Information' at (${btnCoords.x}, ${btnCoords.y})`);
+            // Retry click-and-poll up to 2 retries (3 total attempts)
+            const MAX_CLICK_ATTEMPTS = 3;
+            let downloadSuccess = false;
 
-            // Wait for file to appear in download directory
-            const maxWait = 45000;
-            const pollInterval = 2000;
-            let elapsed = 0;
-
-            while (elapsed < maxWait) {
-                await new Promise(resolve => setTimeout(resolve, pollInterval));
-                elapsed += pollInterval;
-                const dirFiles = fs.existsSync(downloadDir) ? fs.readdirSync(downloadDir) : [];
-                const completed = dirFiles.filter(
-                    f => !f.endsWith(".crdownload") && !f.endsWith(".tmp")
-                );
-                if (completed.length > 0) {
-                    logger.info("ARIBA", `Download complete: ${completed[0]} (${elapsed / 1000}s)`);
-                    break;
+            for (let attempt = 0; attempt < MAX_CLICK_ATTEMPTS; attempt++) {
+                if (attempt > 0) {
+                    logger.warn("ARIBA", `Retrying click-and-poll (attempt ${attempt + 1}/${MAX_CLICK_ATTEMPTS})...`);
+                    await new Promise(resolve => setTimeout(resolve, 3000));
                 }
-                logger.info("ARIBA", `${elapsed / 1000}s - waiting for download...`);
+
+                await new Promise(resolve => setTimeout(resolve, 500));
+                await page.mouse.click(btnCoords.x, btnCoords.y);
+                logger.info("ARIBA", `Clicked 'Print Event Information' at (${btnCoords.x}, ${btnCoords.y}) — attempt ${attempt + 1}`);
+
+                // Wait for file to appear in download directory
+                const maxWait = 45000;
+                const pollInterval = 2000;
+                let elapsed = 0;
+
+                while (elapsed < maxWait) {
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+                    elapsed += pollInterval;
+                    const dirFiles = fs.existsSync(downloadDir) ? fs.readdirSync(downloadDir) : [];
+                    const completed = dirFiles.filter(
+                        f => !f.endsWith(".crdownload") && !f.endsWith(".tmp")
+                    );
+                    if (completed.length > 0) {
+                        logger.info("ARIBA", `Download complete: ${completed[0]} (${elapsed / 1000}s)`);
+                        downloadSuccess = true;
+                        break;
+                    }
+                    logger.info("ARIBA", `${elapsed / 1000}s - waiting for download...`);
+                }
+
+                if (downloadSuccess) break;
+            }
+
+            if (!downloadSuccess) {
+                await captureDebugScreenshot(page, "click_no_file");
+                await page.close();
+                if (fs.existsSync(downloadDir)) {
+                    fs.rmSync(downloadDir, { recursive: true, force: true });
+                }
+                throw new Error("Ariba: 'Print Event Information' clicked but no file downloaded within timeout");
             }
         } else {
             // Fallback: try other download selectors
@@ -195,6 +240,13 @@ export async function downloadAribaDocSync(
             if (downloadBtn) {
                 await downloadBtn.click();
                 await new Promise(resolve => setTimeout(resolve, 15000));
+            } else {
+                await captureDebugScreenshot(page, "button_not_found");
+                await page.close();
+                if (fs.existsSync(downloadDir)) {
+                    fs.rmSync(downloadDir, { recursive: true, force: true });
+                }
+                throw new Error("Ariba: 'Print Event Information' button not found, fallback selectors also failed");
             }
         }
 

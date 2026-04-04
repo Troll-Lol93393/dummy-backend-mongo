@@ -3,6 +3,7 @@ import { Email, IEmail, EMAIL_CATEGORIES, EmailCategory } from "../../models/ema
 import { RFQ } from "../../models/rfq.models";
 import { PORegister } from "../../models/poRegister.model";
 import { logger } from "../../utils/logger";
+import { retryWithBackoff } from "../../utils/retryWithBackoff";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -94,25 +95,29 @@ ${email.textBody?.substring(0, 3000) || "(no text body)"}
 ${email.attachments.length > 0 ? `ATTACHMENTS: ${email.attachments.map(a => a.filename).join(", ")}` : ""}
 ${email.aribaLinks.length > 0 ? `ARIBA LINKS: ${email.aribaLinks.length} link(s) found` : ""}`;
 
-    const response = await axios.post(
-        GROQ_API_URL,
-        {
-            model: GROQ_MODEL,
-            messages: [
-                { role: "system", content: CLASSIFICATION_SYSTEM_PROMPT },
-                { role: "user", content: prompt },
-            ],
-            temperature: 0.1,
-            max_tokens: 1024,
-            response_format: { type: "json_object" },
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-            },
-            timeout: 30000,
-        }
+    const response = await retryWithBackoff(
+        () =>
+            axios.post(
+                GROQ_API_URL,
+                {
+                    model: GROQ_MODEL,
+                    messages: [
+                        { role: "system", content: CLASSIFICATION_SYSTEM_PROMPT },
+                        { role: "user", content: prompt },
+                    ],
+                    temperature: 0.1,
+                    max_tokens: 1024,
+                    response_format: { type: "json_object" },
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                    },
+                    timeout: 30000,
+                }
+            ),
+        { maxRetries: 3, initialDelayMs: 2000 }
     );
 
     const text = response.data?.choices?.[0]?.message?.content || "";
@@ -440,7 +445,14 @@ export async function classifyEmail(emailId: string): Promise<void> {
  * Classify all unprocessed emails in batches.
  */
 export async function classifyUnprocessed(): Promise<number> {
-    const unprocessed = await Email.find({ isProcessed: false, isDeleted: false })
+    // Fresh start: only process emails received from Sunday April 5, 2026 onwards
+    const PIPELINE_START_DATE = new Date("2026-04-05T00:00:00.000Z");
+
+    const unprocessed = await Email.find({
+        isProcessed: false,
+        isDeleted: false,
+        date: { $gte: PIPELINE_START_DATE },
+    })
         .sort({ date: -1 })
         .limit(20)
         .select("_id");
