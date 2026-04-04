@@ -72,6 +72,7 @@ export interface IEmail {
     isArchived: boolean;
     isDeleted: boolean;
     source: EmailSource;
+    extractionFailCount: number;
 }
 
 const emailAttachmentSchema = new Schema<IEmailAttachment>(
@@ -180,6 +181,7 @@ const emailSchema = new Schema<IEmail>(
             enum: ["ARIBA", "DIRECT", "UNKNOWN"],
             default: "UNKNOWN",
         },
+        extractionFailCount: { type: Number, default: 0 },
     },
     { timestamps: true }
 );
