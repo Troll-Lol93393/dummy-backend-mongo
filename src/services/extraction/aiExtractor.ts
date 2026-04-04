@@ -19,9 +19,9 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation, n
     "prNumber": "string - the first 10-digit number from filename (e.g. 1600630211)",
     "supplyType": "string - type of supply (Revenue Supply, Capital Supply, etc)",
     "location": "string - plant/delivery location",
-    "companyName": "string - vendor/company name",
-    "startDate": "string - the response start date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Response start date', 'Start Date', or 'Open Date' fields in the document. Include the time if available.",
-    "dueDate": "string - the due date / deadline / response end date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Due date', 'End Date', 'Deadline', or 'Closing Date' fields in the document. Include the time if available.",
+    "companyName": "string - the buyer/company name (e.g. 'JSW Steel Limited'). Look for 'ShipTo' fields or company references. Must be a short name, NOT a paragraph of text.",
+    "startDate": "string - the response start date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Response start date', 'Start Date', or 'Open Date' fields in the document. IMPORTANT: Ariba dates are in M/D/YYYY format (US format, month first). Convert accurately to ISO 8601.",
+    "dueDate": "string - the due date / deadline / response end date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Due date', 'End Date', 'Deadline', or 'Closing Date' fields in the document. IMPORTANT: Ariba dates are in M/D/YYYY format (US format, month first). Convert accurately to ISO 8601.",
     "items": [
         {
             "serialNumber": "string - the section/serial number from the document (e.g. '7.3', '7.4', '7.3.1'). Look for dot-notation numbers that label each line item in the document",
@@ -200,11 +200,16 @@ function normalizeAIResponse(parsed: Record<string, unknown>, rawText: string): 
         });
     }
 
+    // Sanitize scalar fields — if any field is absurdly long, the AI dumped document text into it
+    const companyName = String(parsed.companyName || "");
+    const location = String(parsed.location || "");
+    const supplyType = String(parsed.supplyType || "");
+
     return {
         prNumber: String(parsed.prNumber || ""),
-        supplyType: String(parsed.supplyType || ""),
-        location: String(parsed.location || ""),
-        companyName: String(parsed.companyName || ""),
+        supplyType: supplyType.length <= 100 ? supplyType : "",
+        location: location.length <= 200 ? location : "",
+        companyName: companyName.length <= 200 ? companyName : "",
         startDate: String(parsed.startDate || ""),
         dueDate: String(parsed.dueDate || ""),
         items,

@@ -16,44 +16,39 @@ export interface ParsedRfpData {
 
 /**
  * Parse date strings from Ariba documents.
- * Ariba uses D/M/YYYY HH:mm format (day-first, 24h clock).
+ * Ariba uses M/D/YYYY HH:mm AM/PM format (US format, month first).
  * Returns ISO 8601 string or empty string if unparseable.
  */
 function parseAribaDate(dateStr: string): string {
     if (!dateStr) return "";
     dateStr = dateStr.trim();
 
-    // Try D/M/YYYY HH:mm (Ariba's format)
-    const dmyTime = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
-    if (dmyTime) {
-        let [, day, month, year, hours, minutes, ampm] = dmyTime;
-        let h = parseInt(hours!, 10);
-        if (ampm) {
-            if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
-            if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
-        }
-        const d = new Date(parseInt(year!, 10), parseInt(month!, 10) - 1, parseInt(day!, 10), h, parseInt(minutes!, 10));
-        if (!isNaN(d.getTime())) return d.toISOString();
-    }
-
-    // Try D/M/YYYY (no time)
-    const dmy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (dmy) {
-        const d = new Date(parseInt(dmy[3]!, 10), parseInt(dmy[2]!, 10) - 1, parseInt(dmy[1]!, 10));
-        if (!isNaN(d.getTime())) return d.toISOString();
-    }
-
-    // Try M/D/YYYY HH:mm (US format fallback)
+    // Ariba uses M/D/YYYY HH:mm AM/PM (US format) — parse this FIRST
     const mdyTime = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
     if (mdyTime) {
         const [, month, day, year, hours, minutes, ampm] = mdyTime;
-        let h = parseInt(hours!, 10);
-        if (ampm) {
-            if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
-            if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+        const m = parseInt(month!, 10);
+        const dd = parseInt(day!, 10);
+        if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) {
+            let h = parseInt(hours!, 10);
+            if (ampm) {
+                if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+                if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+            }
+            const d = new Date(parseInt(year!, 10), m - 1, dd, h, parseInt(minutes!, 10));
+            if (!isNaN(d.getTime())) return d.toISOString();
         }
-        const d = new Date(parseInt(year!, 10), parseInt(month!, 10) - 1, parseInt(day!, 10), h, parseInt(minutes!, 10));
-        if (!isNaN(d.getTime())) return d.toISOString();
+    }
+
+    // Try M/D/YYYY (no time)
+    const mdy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mdy) {
+        const m = parseInt(mdy[1]!, 10);
+        const dd = parseInt(mdy[2]!, 10);
+        if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) {
+            const d = new Date(parseInt(mdy[3]!, 10), m - 1, dd);
+            if (!isNaN(d.getTime())) return d.toISOString();
+        }
     }
 
     // Last resort: try native Date parser
@@ -206,21 +201,40 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
         }
     }
 
-    // Extract company name
-    const companyMatch = rawText.match(
-        /(?:Company|Vendor|Supplier|Party|Firm)\s*(?:Name)?[:\s]*([^\n\r]+)/i
+    // Extract company name from RFQ document
+    // Strategy 1: Ariba docs consistently have "ShipTo {CompanyName} P.O." pattern in item sections
+    const shipToMatch = rawText.match(
+        /ShipTo\s+([A-Z][A-Za-z\s]+(?:Limited|Ltd|Pvt|Inc|Corp|Steel|Industries|Group|Metallics)(?:\s+(?:Limited|Ltd|Pvt))?)/i
     );
-    if (companyMatch) {
-        data.companyName = companyMatch[1]?.trim() ?? "";
+    if (shipToMatch) {
+        data.companyName = shipToMatch[1]?.trim() ?? "";
     }
-    // Ariba docs often have "XXX Limited has invited you" or "Buyer XXX Limited" patterns
+    // Strategy 2: Ariba docs have "XXX Limited has invited you" or "Buyer XXX Limited"
     if (!data.companyName) {
         const aribaCompanyMatch = rawText.match(
-            /(\b[A-Z][A-Za-z\s]+(?:Limited|Ltd|Pvt|Inc|Corp|Steel|Industries|Group)(?:\s+(?:Limited|Ltd|Pvt))?)[\s,]/
+            /(\b[A-Z][A-Za-z\s]+(?:Limited|Ltd|Pvt|Inc|Corp|Steel|Industries|Group|Metallics)(?:\s+(?:Limited|Ltd|Pvt))?)\b/
         );
         if (aribaCompanyMatch) {
             data.companyName = aribaCompanyMatch[1]?.trim() ?? "";
         }
+    }
+    // Strategy 3: Explicit "Company Name:" label (only capture up to 150 chars to avoid runaway matches)
+    if (!data.companyName) {
+        const companyMatch = rawText.match(
+            /(?:Company|Vendor|Firm)\s+Name\s*[:\s]+([^\n\r]{1,150})/i
+        );
+        if (companyMatch) {
+            // Take only up to the first comma or common delimiter
+            const candidate = companyMatch[1]?.trim() ?? "";
+            const cleaned = candidate.split(/[,;|]/)[0]?.trim() ?? "";
+            if (cleaned.length > 0 && cleaned.length <= 150) {
+                data.companyName = cleaned;
+            }
+        }
+    }
+    // Safety: companyName should never exceed 200 chars — if it does, it's garbage
+    if (data.companyName.length > 200) {
+        data.companyName = "";
     }
 
     // Extract location if not from filename
