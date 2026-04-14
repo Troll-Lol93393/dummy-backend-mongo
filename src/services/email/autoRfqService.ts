@@ -225,6 +225,8 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
             // Dates from extraction are already ISO 8601 strings (parsed from Ariba's M/D/YYYY HH:mm AM/PM format)
             const parsedStartDate = data.startDate ? new Date(data.startDate) : null;
             const parsedDueDate = data.dueDate ? new Date(data.dueDate) : null;
+            // Carry over any drawings already downloaded from the Ariba link
+            const drawings = (downloadedAriba.drawings || []).map(d => ({ url: d.url, filename: d.filename }));
             const rfq = await RFQ.create({
                 prNumber: data.prNumber,
                 startDate: parsedStartDate && !isNaN(parsedStartDate.getTime())
@@ -236,6 +238,7 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
                 ownerName: "",
                 companyName: data.companyName,
                 location: data.location,
+                drawings,
                 items: createdRfqItemIds,
                 isQuoted: false,
                 isDeleted: false,

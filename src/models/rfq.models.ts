@@ -10,6 +10,7 @@ export interface IRfq {
     ownerName: string;
     companyName: string;
     location: string;
+    drawings: { url: string; filename: string }[];
     isQuoted: boolean;
     quotedOn?: Date;
     quotationNumber?: number;
@@ -59,6 +60,10 @@ export const rfqSchema: Schema<IRfq> = new Schema(
             trim: true,
             required: [true, "Location is required !"],
         },
+        drawings: [{
+            url: { type: String },
+            filename: { type: String },
+        }],
         isQuoted: {
             type: Boolean,
             default: false,

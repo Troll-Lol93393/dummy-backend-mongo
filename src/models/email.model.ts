@@ -33,6 +33,7 @@ export interface IAribaLink {
     downloadedDocFilename?: string;
     downloadStatus: AribaDownloadStatus;
     errorMessage?: string;
+    drawings: { url: string; filename: string }[];
 }
 
 export interface IEmailClassification {
@@ -97,6 +98,10 @@ const aribaLinkSchema = new Schema<IAribaLink>(
             default: "LINK_EXTRACTED",
         },
         errorMessage: { type: String },
+        drawings: [{
+            url: { type: String, required: true },
+            filename: { type: String, required: true },
+        }],
     },
     { _id: true }
 );

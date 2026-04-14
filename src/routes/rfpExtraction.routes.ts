@@ -6,6 +6,7 @@ import {
     confirmAndSave,
     bulkUploadAndExtract,
     reExtract,
+    discoverDrawings,
 } from "../controller/rfpExtraction.controller";
 
 const rfpExtractionRoutes = Router();
@@ -39,6 +40,13 @@ rfpExtractionRoutes.post(
     verifyJWT,
     upload.single("rfpFile"),
     reExtract
+);
+
+// Discovery: screenshot Ariba page, find attachment links, attempt drawing downloads
+rfpExtractionRoutes.post(
+    "/discover-drawings",
+    verifyJWT,
+    discoverDrawings
 );
 
 export { rfpExtractionRoutes };
