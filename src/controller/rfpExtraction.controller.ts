@@ -16,6 +16,7 @@ import { uploadFileToCloudinary } from "../utils/cloudinary";
 import { getEmailSettings } from "../models/emailSettings.model";
 import { decryptPassword } from "../utils/emailEncryption";
 import { discoverAribaDrawings } from "../services/email/aribaScraperService";
+import { autoMapRfqDrawingsToItems } from "../services/rfq/drawingMapper.service";
 
 // POST /api/v1/rfp-extract/upload
 // Upload RFP file → run 3-layer extraction → return extracted data (does NOT save to DB yet)
@@ -191,6 +192,8 @@ export const confirmAndSave = asyncHandler(
                 }
             }
         }
+
+        await autoMapRfqDrawingsToItems(rfq._id.toString());
 
         // Populate the RFQ with items for response
         const populatedRfq = await RFQ.findById(rfq._id).populate({
