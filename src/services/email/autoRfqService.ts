@@ -7,6 +7,7 @@ import { CommercialSpecs } from "../../models/item.commercial.model";
 import { runExtractionPipeline } from "../extraction/extractionOrchestrator";
 import { ParsedItem } from "../extraction/docParser";
 import { logger } from "../../utils/logger";
+import { autoMapRfqDrawingsToItems } from "../rfq/drawingMapper.service";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -160,6 +161,7 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
                 if (newDrawings.length > 0) {
                     existingRfq.drawings.push(...newDrawings.map(d => ({ url: d.url, filename: d.filename })));
                     await existingRfq.save();
+                    await autoMapRfqDrawingsToItems(existingRfq._id.toString());
                     logger.info("AUTO-RFQ", `Copied ${newDrawings.length} drawing(s) to existing RFQ ${existingRfq.prNumber}`);
                 }
                 logger.info("AUTO-RFQ", `Email ${email._id} linked to existing RFQ ${existingRfq.prNumber}`);
@@ -252,6 +254,8 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
                 createdBy: "system-auto",
                 updatedBy: "system-auto",
             });
+
+            await autoMapRfqDrawingsToItems(rfq._id.toString());
 
             // Link email to the new RFQ
             email.linkedRfq = rfq._id;
