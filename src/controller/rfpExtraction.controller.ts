@@ -13,6 +13,9 @@ import { ItemTechSpecs } from "../models/item.techSpecs.model";
 import { CommercialSpecs } from "../models/item.commercial.model";
 import { Email } from "../models/email.model";
 import { uploadFileToCloudinary } from "../utils/cloudinary";
+import { getEmailSettings } from "../models/emailSettings.model";
+import { decryptPassword } from "../utils/emailEncryption";
+import { discoverAribaDrawings } from "../services/email/aribaScraperService";
 
 // POST /api/v1/rfp-extract/upload
 // Upload RFP file → run 3-layer extraction → return extracted data (does NOT save to DB yet)
@@ -176,9 +179,17 @@ export const confirmAndSave = asyncHandler(
             updatedBy: req.user?._id?.toString() || "",
         });
 
-        // Auto-link email to RFQ if emailId provided
+        // Auto-link email to RFQ and carry over any downloaded drawings
         if (emailId) {
-            await Email.findByIdAndUpdate(emailId, { linkedRfq: rfq._id });
+            const linkedEmail = await Email.findByIdAndUpdate(emailId, { linkedRfq: rfq._id }, { new: false });
+            if (linkedEmail) {
+                const aribaWithDrawings = linkedEmail.aribaLinks?.find(l => l.drawings && l.drawings.length > 0);
+                if (aribaWithDrawings && aribaWithDrawings.drawings.length > 0) {
+                    await rfq.updateOne({
+                        drawings: aribaWithDrawings.drawings.map(d => ({ url: d.url, filename: d.filename })),
+                    });
+                }
+            }
         }
 
         // Populate the RFQ with items for response
@@ -346,6 +357,75 @@ export const reExtract = asyncHandler(
                 extractionResult.success
                     ? `Re-extraction via ${extractionResult.layer} layer (${extractionResult.status})`
                     : "Re-extraction failed — manual entry required"
+            )
+        );
+    }
+);
+
+// POST /api/v1/rfp-extract/discover-drawings
+// Discovery: navigate Ariba RFQ page, screenshot it, find attachment links, attempt downloads
+// Use this to identify the correct selectors before wiring into the cron pipeline (Phase 2)
+export const discoverDrawings = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { aribaUrl } = req.body;
+        if (!aribaUrl) {
+            throw new ApiError(400, "aribaUrl is required");
+        }
+
+        const settings = await getEmailSettings();
+        if (!settings.aribaUsername || !settings.aribaPassword) {
+            throw new ApiError(500, "Ariba credentials not configured in Email Settings");
+        }
+
+        const aribaPassword = decryptPassword(settings.aribaPassword);
+
+        const result = await discoverAribaDrawings(
+            aribaUrl,
+            settings.aribaUsername,
+            aribaPassword
+        );
+
+        // Upload screenshot to Cloudinary
+        let screenshotUrl: string | null = null;
+        if (result.screenshotPath && fs.existsSync(result.screenshotPath)) {
+            try {
+                const cloudResult = await uploadFileToCloudinary(result.screenshotPath);
+                screenshotUrl = cloudResult?.secure_url || null;
+            } catch {
+                // Non-critical — screenshotPath still returned for local reference
+            }
+            try { fs.unlinkSync(result.screenshotPath); } catch { /* ignore */ }
+        }
+
+        // Upload any downloaded drawings to Cloudinary
+        const drawings: { url: string; filename: string }[] = [];
+        for (const drawing of result.drawings) {
+            if (fs.existsSync(drawing.filePath)) {
+                try {
+                    const cloudResult = await uploadFileToCloudinary(drawing.filePath);
+                    if (cloudResult?.secure_url) {
+                        drawings.push({ url: cloudResult.secure_url, filename: drawing.filename });
+                    }
+                } catch {
+                    // Non-critical
+                }
+            }
+        }
+
+        // Cleanup temp download dir
+        if (fs.existsSync(result.downloadDir)) {
+            fs.rmSync(result.downloadDir, { recursive: true, force: true });
+        }
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    screenshotUrl,
+                    drawings,
+                    candidateLinks: result.candidateLinks,
+                },
+                `Discovery complete: ${result.candidateLinks.length} candidate link(s) found, ${drawings.length} drawing(s) downloaded`
             )
         );
     }

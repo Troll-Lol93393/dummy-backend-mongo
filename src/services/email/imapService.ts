@@ -103,7 +103,7 @@ function extractAribaLinks(html: string): IAribaLink[] {
 
         if (isAribaEventLink(href)) {
             seen.add(href);
-            links.push({ url: href, downloadStatus: "LINK_EXTRACTED" });
+            links.push({ url: href, downloadStatus: "LINK_EXTRACTED", drawings: [] });
         }
     });
 
