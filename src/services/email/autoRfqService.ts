@@ -153,10 +153,16 @@ export async function autoCreateRfqsFromDownloads(): Promise<number> {
                 // Link the email to the existing RFQ instead
                 email.linkedRfq = existingRfq._id;
                 await email.save();
-                logger.info(
-                    "AUTO-RFQ",
-                    `Email ${email._id} linked to existing RFQ ${existingRfq.prNumber}`
+                // Copy any new drawings from this email to the existing RFQ
+                const newDrawings = (downloadedAriba.drawings || []).filter(
+                    d => !existingRfq.drawings.some((r: { url: string }) => r.url === d.url)
                 );
+                if (newDrawings.length > 0) {
+                    existingRfq.drawings.push(...newDrawings.map(d => ({ url: d.url, filename: d.filename })));
+                    await existingRfq.save();
+                    logger.info("AUTO-RFQ", `Copied ${newDrawings.length} drawing(s) to existing RFQ ${existingRfq.prNumber}`);
+                }
+                logger.info("AUTO-RFQ", `Email ${email._id} linked to existing RFQ ${existingRfq.prNumber}`);
                 continue;
             }
 
