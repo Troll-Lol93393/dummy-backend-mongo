@@ -1,5 +1,5 @@
 import { extractTextFromFile, parseRfpDocument, ParsedRfpData } from "./docParser";
-import { extractWithAI, isAIAvailable } from "./aiExtractor";
+import { extractWithAI, isAIAvailable, ProviderConfig } from "./aiExtractor";
 
 export interface ExtractionResult {
     success: boolean;
@@ -8,10 +8,32 @@ export interface ExtractionResult {
     confidence: number;
     data: ParsedRfpData;
     errors: string[];
+    providerName?: string;
 }
 
+const AI_PROVIDERS: ProviderConfig[] = [
+    {
+        name: "Groq",
+        apiUrl: "https://api.groq.com/openai/v1/chat/completions",
+        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
+        apiKey: process.env.GROQ_API_KEY || "",
+    },
+    {
+        name: "Cerebras",
+        apiUrl: "https://api.cerebras.ai/v1/chat/completions",
+        model: "llama-3.3-70b",
+        apiKey: process.env.CEREBRAS_API_KEY || "",
+    },
+    {
+        name: "OpenRouter",
+        apiUrl: "https://openrouter.ai/api/v1/chat/completions",
+        model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
+        apiKey: process.env.OPENROUTER_API_KEY || "",
+    },
+];
+
 // Orchestrates the 3-layer extraction pipeline:
-// Layer 1: AI (Ollama) → Layer 2: JS Parser (mammoth/pdf-parse) → Layer 3: Manual
+// Layer 1: AI providers (Groq → Cerebras → OpenRouter) → Layer 2: JS Parser → Layer 3: Manual
 export async function runExtractionPipeline(
     filePath: string,
     originalFilename: string
@@ -19,7 +41,7 @@ export async function runExtractionPipeline(
     const errors: string[] = [];
     let rawText = "";
 
-    // Step 1: Extract raw text from document (needed by both layers)
+    // Step 1: Extract raw text from document (needed by all layers)
     try {
         rawText = await extractTextFromFile(filePath);
     } catch (err: unknown) {
@@ -27,12 +49,19 @@ export async function runExtractionPipeline(
         errors.push(`Text extraction error: ${msg}`);
     }
 
-    // Layer 1: Try AI extraction first
+    // Layer 1: Try AI providers in order
     if (rawText) {
-        try {
-            const aiUp = await isAIAvailable();
-            if (aiUp) {
-                const aiResult = await extractWithAI(rawText, originalFilename);
+        const activeProviders = AI_PROVIDERS.filter(p => p.apiKey !== "");
+
+        for (const provider of activeProviders) {
+            try {
+                const aiUp = await isAIAvailable(provider);
+                if (!aiUp) {
+                    errors.push(`${provider.name} AI service not available, trying next provider`);
+                    continue;
+                }
+
+                const aiResult = await extractWithAI(rawText, originalFilename, provider);
                 if (aiResult.success && aiResult.confidence >= 50) {
                     return {
                         success: true,
@@ -41,19 +70,19 @@ export async function runExtractionPipeline(
                         confidence: aiResult.confidence,
                         data: aiResult.data,
                         errors: [],
+                        providerName: provider.name,
                     };
                 }
                 if (aiResult.confidence > 0 && aiResult.confidence < 50) {
                     errors.push(
-                        `AI extraction returned low confidence (${aiResult.confidence}%), falling back to parser`
+                        `${provider.name} returned low confidence (${aiResult.confidence}%), trying next provider`
                     );
                 }
-            } else {
-                errors.push("Groq AI service not available, falling back to parser");
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : "AI extraction failed";
+                errors.push(`${provider.name} error: ${msg}`);
+                // 429 or other transient error — continue to next provider
             }
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "AI extraction failed";
-            errors.push(`AI Layer error: ${msg}`);
         }
     }
 

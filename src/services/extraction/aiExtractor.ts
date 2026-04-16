@@ -2,8 +2,12 @@ import axios from "axios";
 import { ParsedRfpData, ParsedItem } from "./docParser";
 import { retryWithBackoff } from "../../utils/retryWithBackoff";
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+export interface ProviderConfig {
+    name: string;
+    apiUrl: string;
+    model: string;
+    apiKey: string;
+}
 
 const SYSTEM_PROMPT = `You are a data extraction assistant specialized in extracting structured data from RFP (Request for Proposal/Quotation) documents used in industrial procurement.
 
@@ -25,7 +29,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation, n
     "dueDate": "string - the due date / deadline / response end date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Due date', 'End Date', 'Deadline', or 'Closing Date' fields in the document. IMPORTANT: Ariba dates are in M/D/YYYY format (US format, month first). Convert accurately to ISO 8601.",
     "items": [
         {
-            "serialNumber": "string - the section/serial number from the document (e.g. '7.3', '7.4', '7.3.1'). Look for dot-notation numbers that label each line item in the document",
+            "serialNumber": "string - COPY the section/serial number EXACTLY as it appears in the document (e.g. '7.3', '7.4', '7.3.1'). Do NOT invent, renumber, or reformat. If the document shows '7.3', output '7.3'.",
             "itemCode": "string - 10-digit code starting with 2100 extracted from the 18-digit number in the document",
             "itemName": "string - short item name",
             "itemDesc": "string - full item description",
@@ -52,7 +56,8 @@ Extract ALL items if multiple are present.`;
 
 export async function extractWithAI(
     rawText: string,
-    originalFilename: string
+    originalFilename: string,
+    provider: ProviderConfig
 ): Promise<{ success: boolean; data: ParsedRfpData; confidence: number }> {
     const emptyResult: ParsedRfpData = {
         prNumber: "",
@@ -66,19 +71,19 @@ export async function extractWithAI(
     };
 
     try {
-        const apiKey = process.env.GROQ_API_KEY;
-        if (!apiKey) {
-            throw new Error("GROQ_API_KEY is not set in environment variables");
-        }
-
         const userMessage = `FILENAME: ${originalFilename}\n\nDOCUMENT TEXT:\n${rawText}`;
+
+        const extraHeaders: Record<string, string> =
+            provider.name === "OpenRouter"
+                ? { "HTTP-Referer": "https://sheth-engg-backend-pvzq.onrender.com" }
+                : {};
 
         const response = await retryWithBackoff(
             () =>
                 axios.post(
-                    GROQ_API_URL,
+                    provider.apiUrl,
                     {
-                        model: GROQ_MODEL,
+                        model: provider.model,
                         messages: [
                             { role: "system", content: SYSTEM_PROMPT },
                             { role: "user", content: userMessage },
@@ -89,8 +94,9 @@ export async function extractWithAI(
                     },
                     {
                         headers: {
-                            Authorization: `Bearer ${apiKey}`,
+                            Authorization: `Bearer ${provider.apiKey}`,
                             "Content-Type": "application/json",
+                            ...extraHeaders,
                         },
                         timeout: 60000,
                     }
@@ -123,19 +129,20 @@ export async function extractWithAI(
             throw error;
         }
         const message = error instanceof Error ? error.message : "Unknown AI extraction error";
-        console.error("AI extraction failed:", message);
+        console.error(`AI extraction failed (${provider.name}):`, message);
         return { success: false, data: emptyResult, confidence: 0 };
     }
 }
 
-// Check if Groq API is reachable and key is valid
-export async function isAIAvailable(): Promise<boolean> {
+// Check if the given provider API is reachable and key is valid
+export async function isAIAvailable(provider: ProviderConfig): Promise<boolean> {
     try {
-        const apiKey = process.env.GROQ_API_KEY;
-        if (!apiKey) return false;
+        if (!provider.apiKey) return false;
 
-        const response = await axios.get("https://api.groq.com/openai/v1/models", {
-            headers: { Authorization: `Bearer ${apiKey}` },
+        // Derive models endpoint from the provider's chat completions URL
+        const modelsUrl = provider.apiUrl.replace(/\/chat\/completions$/, "/models");
+        const response = await axios.get(modelsUrl, {
+            headers: { Authorization: `Bearer ${provider.apiKey}` },
             timeout: 5000,
         });
         return response.status === 200;

@@ -139,7 +139,14 @@ export const getRFQ = asyncHandler(async (req: Request, res: Response, next: Nex
     if (!rfq) {
         throw new ApiError(404, "RFQ not found");
     }
-    res.status(200).json(new ApiResponse(200, rfq, "RFQ fetched successfully"));
+
+    const rfqData = rfq.toObject() as unknown as Record<string, unknown>;
+    const items = Array.isArray(rfqData.items) ? (rfqData.items as Array<Record<string, unknown>>) : [];
+    rfqData.items = items.sort((a, b) =>
+        compareSerialNumbers(String(a.serialNumber ?? ""), String(b.serialNumber ?? ""))
+    );
+
+    res.status(200).json(new ApiResponse(200, rfqData, "RFQ fetched successfully"));
 });
 
 export const updateRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
@@ -250,3 +257,13 @@ export const deleteRFQ = asyncHandler(async (req: Request, res: Response, next: 
     const rfq = await RFQ.findByIdAndUpdate(rfqId, { isDeleted: true }, { new: true });
     res.status(200).json(new ApiResponse(200, rfq, "RFQ deleted successfully"));
 });
+
+function compareSerialNumbers(a: string, b: string): number {
+    const partsA = a.split(".").map(p => parseInt(p, 10) || 0);
+    const partsB = b.split(".").map(p => parseInt(p, 10) || 0);
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+        const diff = (partsA[i] ?? 0) - (partsB[i] ?? 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
