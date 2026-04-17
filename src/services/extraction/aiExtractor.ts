@@ -71,7 +71,16 @@ export async function extractWithAI(
     };
 
     try {
-        const userMessage = `FILENAME: ${originalFilename}\n\nDOCUMENT TEXT:\n${rawText}`;
+        // Smart truncation to stay within free-tier TPM limits (~3,000 tokens input budget).
+        // Ariba RFP docs: header/dates are at the start, item table is at the end (after long T&C section).
+        // Take first 6,000 chars (PR number, dates, company) + last 6,000 chars (item table).
+        let truncatedText: string;
+        if (rawText.length <= 12000) {
+            truncatedText = rawText;
+        } else {
+            truncatedText = rawText.substring(0, 6000) + "\n\n[...middle section omitted...]\n\n" + rawText.substring(rawText.length - 6000);
+        }
+        const userMessage = `FILENAME: ${originalFilename}\n\nDOCUMENT TEXT:\n${truncatedText}`;
 
         const extraHeaders: Record<string, string> =
             provider.name === "OpenRouter"
@@ -89,7 +98,7 @@ export async function extractWithAI(
                             { role: "user", content: userMessage },
                         ],
                         temperature: 0.1,
-                        max_tokens: 4096,
+                        max_tokens: 2000,
                         response_format: { type: "json_object" },
                     },
                     {
@@ -101,7 +110,7 @@ export async function extractWithAI(
                         timeout: 60000,
                     }
                 ),
-            { maxRetries: 3, initialDelayMs: 2000 }
+            { maxRetries: 0, initialDelayMs: 2000 }
         );
 
         const aiResponse = response.data?.choices?.[0]?.message?.content;
@@ -124,13 +133,8 @@ export async function extractWithAI(
             confidence,
         };
     } catch (error: unknown) {
-        // Rethrow 429 so callers know it was a transient rate-limit failure
-        if (axios.isAxiosError(error) && error.response?.status === 429) {
-            throw error;
-        }
-        const message = error instanceof Error ? error.message : "Unknown AI extraction error";
-        console.error(`AI extraction failed (${provider.name}):`, message);
-        return { success: false, data: emptyResult, confidence: 0 };
+        // Always rethrow so the orchestrator can try the next provider
+        throw error;
     }
 }
 
@@ -139,13 +143,24 @@ export async function isAIAvailable(provider: ProviderConfig): Promise<boolean> 
     try {
         if (!provider.apiKey) return false;
 
-        // Derive models endpoint from the provider's chat completions URL
+        // Try the /models endpoint first; fall back to assuming available if it doesn't exist
+        // (some providers like Cerebras may not expose a /models endpoint)
         const modelsUrl = provider.apiUrl.replace(/\/chat\/completions$/, "/models");
-        const response = await axios.get(modelsUrl, {
-            headers: { Authorization: `Bearer ${provider.apiKey}` },
-            timeout: 5000,
-        });
-        return response.status === 200;
+        try {
+            const response = await axios.get(modelsUrl, {
+                headers: { Authorization: `Bearer ${provider.apiKey}` },
+                timeout: 5000,
+            });
+            return response.status === 200;
+        } catch (modelsErr: unknown) {
+            // If /models returns 404 or similar, assume the provider is available
+            // (the completions endpoint will validate the key on actual use)
+            if (axios.isAxiosError(modelsErr) && modelsErr.response?.status === 404) {
+                return true;
+            }
+            // Network error or timeout on /models — assume unavailable
+            throw modelsErr;
+        }
     } catch {
         return false;
     }

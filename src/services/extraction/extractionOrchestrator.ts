@@ -11,26 +11,29 @@ export interface ExtractionResult {
     providerName?: string;
 }
 
-const AI_PROVIDERS: ProviderConfig[] = [
-    {
-        name: "Groq",
-        apiUrl: "https://api.groq.com/openai/v1/chat/completions",
-        model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
-        apiKey: process.env.GROQ_API_KEY || "",
-    },
-    {
-        name: "Cerebras",
-        apiUrl: "https://api.cerebras.ai/v1/chat/completions",
-        model: "llama-3.3-70b",
-        apiKey: process.env.CEREBRAS_API_KEY || "",
-    },
-    {
-        name: "OpenRouter",
-        apiUrl: "https://openrouter.ai/api/v1/chat/completions",
-        model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
-        apiKey: process.env.OPENROUTER_API_KEY || "",
-    },
-];
+// Defined as a function so env vars are read at request time (after dotenv loads), not at module init
+function getAIProviders(): ProviderConfig[] {
+    return [
+        {
+            name: "Groq",
+            apiUrl: "https://api.groq.com/openai/v1/chat/completions",
+            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+            apiKey: process.env.GROQ_API_KEY || "",
+        },
+        {
+            name: "Cerebras",
+            apiUrl: "https://api.cerebras.ai/v1/chat/completions",
+            model: "qwen-3-235b-a22b-instruct-2507",
+            apiKey: process.env.CEREBRAS_API_KEY || "",
+        },
+        {
+            name: "OpenRouter",
+            apiUrl: "https://openrouter.ai/api/v1/chat/completions",
+            model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
+            apiKey: process.env.OPENROUTER_API_KEY || "",
+        },
+    ];
+}
 
 // Orchestrates the 3-layer extraction pipeline:
 // Layer 1: AI providers (Groq → Cerebras → OpenRouter) → Layer 2: JS Parser → Layer 3: Manual
@@ -51,7 +54,7 @@ export async function runExtractionPipeline(
 
     // Layer 1: Try AI providers in order
     if (rawText) {
-        const activeProviders = AI_PROVIDERS.filter(p => p.apiKey !== "");
+        const activeProviders = getAIProviders().filter(p => p.apiKey !== "");
 
         for (const provider of activeProviders) {
             try {
@@ -62,6 +65,7 @@ export async function runExtractionPipeline(
                 }
 
                 const aiResult = await extractWithAI(rawText, originalFilename, provider);
+
                 if (aiResult.success && aiResult.confidence >= 50) {
                     return {
                         success: true,
@@ -74,14 +78,13 @@ export async function runExtractionPipeline(
                     };
                 }
                 if (aiResult.confidence > 0 && aiResult.confidence < 50) {
-                    errors.push(
-                        `${provider.name} returned low confidence (${aiResult.confidence}%), trying next provider`
-                    );
+                    errors.push(`${provider.name} returned low confidence (${aiResult.confidence}%), trying next provider`);
+                } else if (aiResult.confidence === 0) {
+                    errors.push(`${provider.name} returned no usable data (confidence 0%), trying next provider`);
                 }
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : "AI extraction failed";
                 errors.push(`${provider.name} error: ${msg}`);
-                // 429 or other transient error — continue to next provider
             }
         }
     }

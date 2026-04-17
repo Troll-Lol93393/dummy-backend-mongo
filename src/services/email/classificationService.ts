@@ -117,7 +117,7 @@ ${email.aribaLinks.length > 0 ? `ARIBA LINKS: ${email.aribaLinks.length} link(s)
                     timeout: 30000,
                 }
             ),
-        { maxRetries: 3, initialDelayMs: 2000 }
+        { maxRetries: 0, initialDelayMs: 2000 }
     );
 
     const text = response.data?.choices?.[0]?.message?.content || "";
@@ -369,28 +369,32 @@ export async function classifyEmail(emailId: string): Promise<void> {
         // Step 1: Subject-based pre-classification (fast, no AI needed)
         const preResult = await preClassifyBySubject(email.subject, email.textBody);
 
-        // Step 2: AI classification
-        const result = await classifyWithAI(email);
-
-        // Step 3: Override AI category if subject-based rule matched with high confidence
+        // Step 2: AI classification — skip if subject rules already gave a confident match
+        let result: ClassificationResult;
         if (preResult) {
-            result.category = preResult.category;
-            result.confidence = Math.max(result.confidence, 90);
-            // Merge PO numbers from subject detection
-            if (preResult.poNumbers.length > 0) {
-                result.extractedData.poNumbers = [
-                    ...new Set([...preResult.poNumbers, ...(result.extractedData.poNumbers || [])]),
-                ];
-            }
-            // Merge PR numbers from subject detection
-            if (preResult.prNumbers.length > 0) {
-                result.extractedData.prNumbers = [
-                    ...new Set([...preResult.prNumbers, ...(result.extractedData.prNumbers || [])]),
-                ];
-            }
+            // Subject rule matched — no need to call Groq, saves quota for extraction
+            result = {
+                category: preResult.category,
+                confidence: 90,
+                extractedData: {
+                    prNumbers: preResult.prNumbers,
+                    poNumbers: preResult.poNumbers,
+                    companyNames: [],
+                    contactPerson: undefined,
+                    contactEmail: undefined,
+                    contactPhone: undefined,
+                    location: undefined,
+                    eventStartDate: null,
+                    dueDate: null,
+                    actionItems: [],
+                    summary: "",
+                },
+            };
+        } else {
+            result = await classifyWithAI(email);
         }
 
-        // Merge regex-extracted PR & PO numbers with AI-extracted ones
+        // Step 3: Merge regex-extracted PR & PO numbers with classified ones
         const regexPrNumbers = extractPrNumbersFromText(combinedText);
         const allPrNumbers = [
             ...new Set([...result.extractedData.prNumbers, ...regexPrNumbers]),
