@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from "express";
 import path from "path";
 import fs from "fs";
+import https from "https";
+import http from "http";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/apiResponse";
-import { runExtractionPipeline, ExtractionResult } from "../services/extraction/extractionOrchestrator";
+import { runExtractionPipeline, runSingleItemExtractionPipeline, ExtractionResult } from "../services/extraction/extractionOrchestrator";
 import { ParsedRfpData, ParsedItem } from "../services/extraction/docParser";
 import { Item } from "../models/item.model";
 import { RFQ } from "../models/rfq.models";
@@ -88,6 +90,7 @@ export const confirmAndSave = asyncHandler(
             ownerName,
             items,
             emailId,
+            fileUrl,
         } = req.body;
 
         if (!prNumber || !location || !companyName) {
@@ -107,8 +110,8 @@ export const confirmAndSave = asyncHandler(
         const createdRfqItemIds: string[] = [];
 
         for (const rawItem of items as ParsedItem[]) {
-            // Find or create Item in master
-            let item = await Item.findOne({ itemCode: rawItem.itemCode, isDeleted: false });
+            // Find or create Item in master (search regardless of isDeleted to avoid duplicate key errors)
+            let item = await Item.findOne({ itemCode: rawItem.itemCode });
 
             if (!item) {
                 if (!rawItem.itemCode || !rawItem.itemName) {
@@ -125,6 +128,12 @@ export const confirmAndSave = asyncHandler(
                     size: "",
                     isDeleted: false,
                 });
+            } else if (item.isDeleted) {
+                // Restore soft-deleted item with fresh data
+                item.isDeleted = false;
+                item.itemName = rawItem.itemName || item.itemName;
+                item.itemDesc = rawItem.itemDesc || rawItem.itemName || item.itemDesc;
+                await item.save();
             }
 
             // Create tech specs
@@ -154,7 +163,7 @@ export const confirmAndSave = asyncHandler(
                 serialNumber: rawItem.serialNumber || "",
                 item: item._id,
                 quantity: rawItem.quantity || 1,
-                drawingNumber: rawItem.drawingNumber || "",
+                drawingNumber: enrichDrawingNumber(rawItem.drawingNumber || "", rawItem.itemDesc),
                 drawingUrl: "",
                 itemTechSpecs: techSpecs._id,
                 commercialSpecs: commercialSpecs._id,
@@ -172,6 +181,7 @@ export const confirmAndSave = asyncHandler(
             ownerName: ownerName || "",
             companyName,
             location,
+            documentUrl: fileUrl || undefined,
             items: createdRfqItemIds,
             isQuoted: false,
             isDeleted: false,
@@ -362,6 +372,362 @@ export const reExtract = asyncHandler(
                     : "Re-extraction failed — manual entry required"
             )
         );
+    }
+);
+
+// Helper: download a file from a URL to a local temp path (follows redirects)
+function downloadFileFromUrl(url: string, destPath: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const handler = url.startsWith("https") ? https : http;
+        const file = fs.createWriteStream(destPath);
+        handler
+            .get(url, response => {
+                if (response.statusCode === 301 || response.statusCode === 302) {
+                    const redirectUrl = response.headers.location;
+                    if (redirectUrl) {
+                        file.close();
+                        if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+                        downloadFileFromUrl(redirectUrl, destPath).then(resolve, reject);
+                        return;
+                    }
+                }
+                response.pipe(file);
+                file.on("finish", () => { file.close(); resolve(); });
+            })
+            .on("error", err => {
+                file.close();
+                if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+                reject(err);
+            });
+    });
+}
+
+// POST /api/v1/rfp-extract/re-extract-url
+// Re-run extraction on a document already stored in Cloudinary (no file upload needed)
+export const reExtractFromUrl = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { documentUrl, filename } = req.body;
+        if (!documentUrl) throw new ApiError(400, "documentUrl is required");
+
+        const originalFilename = filename || path.basename(new URL(documentUrl).pathname) || "document.doc";
+        const ext = path.extname(originalFilename).toLowerCase() || ".doc";
+        if (![".doc", ".docx", ".pdf"].includes(ext)) {
+            throw new ApiError(400, "Only .doc, .docx, and .pdf files are supported");
+        }
+
+        const tmpPath = path.join(require("os").tmpdir(), `rfp_reextract_${Date.now()}${ext}`);
+        try {
+            await downloadFileFromUrl(documentUrl, tmpPath);
+        } catch (err) {
+            throw new ApiError(500, `Failed to download document: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        let extractionResult;
+        try {
+            extractionResult = await runExtractionPipeline(tmpPath, originalFilename);
+        } finally {
+            try { fs.unlinkSync(tmpPath); } catch { /* non-critical */ }
+        }
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    extraction: {
+                        layer: extractionResult.layer,
+                        status: extractionResult.status,
+                        confidence: extractionResult.confidence,
+                        errors: extractionResult.errors,
+                    },
+                    extractedData: extractionResult.data,
+                    rawText: extractionResult.data.rawText,
+                },
+                extractionResult.success
+                    ? `Re-extraction via ${extractionResult.layer} layer (${extractionResult.status})`
+                    : "Re-extraction failed — manual entry required"
+            )
+        );
+    }
+);
+
+// POST /api/v1/rfp-extract/single-item-url
+// Extract a single item from a document already stored in Cloudinary (no file upload)
+export const extractSingleItemFromUrl = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { documentUrl, filename, serialNumber } = req.body;
+        if (!documentUrl) throw new ApiError(400, "documentUrl is required");
+        if (!serialNumber?.trim()) throw new ApiError(400, "serialNumber is required");
+
+        const originalFilename = filename || path.basename(new URL(documentUrl).pathname) || "document.doc";
+        const ext = path.extname(originalFilename).toLowerCase() || ".doc";
+        const tmpPath = path.join(require("os").tmpdir(), `rfp_single_${Date.now()}${ext}`);
+        try {
+            await downloadFileFromUrl(documentUrl, tmpPath);
+        } catch (err) {
+            throw new ApiError(500, `Failed to download document: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        let result;
+        try {
+            result = await runSingleItemExtractionPipeline(tmpPath, originalFilename, serialNumber.trim());
+        } finally {
+            try { fs.unlinkSync(tmpPath); } catch { /* non-critical */ }
+        }
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                { layer: result.layer, confidence: result.confidence, errors: result.errors, item: result.item },
+                result.success ? `Item extracted via ${result.layer} (${result.confidence}%)` : "Extraction failed"
+            )
+        );
+    }
+);
+
+// POST /api/v1/rfp-extract/single-item
+// Upload a file and extract just ONE item (by serial number) — saves tokens vs full extraction
+export const extractSingleItem = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const file = req.file;
+        if (!file) throw new ApiError(400, "RFP file is required");
+
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (![".doc", ".docx", ".pdf"].includes(ext)) {
+            fs.unlinkSync(file.path);
+            throw new ApiError(400, "Only .doc, .docx, and .pdf files are supported");
+        }
+
+        const { serialNumber } = req.body;
+        if (!serialNumber || !serialNumber.trim()) {
+            fs.unlinkSync(file.path);
+            throw new ApiError(400, "serialNumber is required for single-item extraction");
+        }
+
+        const result = await runSingleItemExtractionPipeline(file.path, file.originalname, serialNumber.trim());
+
+        try { fs.unlinkSync(file.path); } catch { /* non-critical */ }
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                { layer: result.layer, confidence: result.confidence, errors: result.errors, item: result.item },
+                result.success ? `Item extracted via ${result.layer} (confidence ${result.confidence}%)` : "Extraction failed — manual entry required"
+            )
+        );
+    }
+);
+
+/**
+ * Extracts the position/item number from an item description and appends it to the drawing number.
+ *
+ * Handles two description formats produced by the extraction pipeline:
+ *
+ * 1. Full APD format:
+ *    "APD,ITEM NAME:HEAT INSULATING CAP;DRAWING NUMBER:JSW-RIG-SP-HIC-M-1014;POSITION OR ITEM NUMBER:2;..."
+ *    → matches "POSITION OR ITEM NUMBER:2"
+ *
+ * 2. Short comma format (AI shorthand):
+ *    "HEAT INSLTNG CAP,JSW-RIG-SP-HIC-M-1014,2"
+ *    → drawing number appears in desc, trailing number after it is the position
+ *
+ * Result: "JSW-RIG-SP-HIC-M-1014 (ITEM- 2)"
+ */
+function enrichDrawingNumber(drawingNumber: string, itemDesc?: string): string {
+    if (!drawingNumber || !itemDesc) return drawingNumber;
+    // Already has position suffix — don't double-append
+    if (/\(ITEM-\s*\d+\)/i.test(drawingNumber)) return drawingNumber;
+
+    // Pattern 1: full APD format — "POSITION OR ITEM NUMBER:N"
+    const apdMatch = itemDesc.match(/POSITION\s+OR\s+ITEM\s+NUMBER\s*[:\s]+(\d+)/i);
+    if (apdMatch && apdMatch[1]) {
+        return `${drawingNumber} (ITEM- ${apdMatch[1]})`;
+    }
+
+    // Pattern 2: short comma format — "...,DRAWING_NUMBER,N"
+    // Escape the drawing number for use in a regex
+    const escaped = drawingNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const shortMatch = itemDesc.match(new RegExp(escaped + "\\s*,\\s*(\\d+)", "i"));
+    if (shortMatch && shortMatch[1]) {
+        return `${drawingNumber} (ITEM- ${shortMatch[1]})`;
+    }
+
+    return drawingNumber;
+}
+
+// Placeholder values the AI sometimes returns instead of real data
+const PLACEHOLDER_VALUES = new Set([
+    "item name", "item code", "item description", "item type",
+    "string", "n/a", "na", "unknown", "null", "undefined", "none", "tbd",
+]);
+
+function isPlaceholder(value: string | undefined): boolean {
+    if (!value || !value.trim()) return true;
+    return PLACEHOLDER_VALUES.has(value.trim().toLowerCase());
+}
+
+// POST /api/v1/rfp-extract/add-item/:rfqId
+// Append a single extracted item to an existing RFQ (does NOT replace current items)
+export const addItemToRfq = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { rfqId } = req.params;
+        const rawItem = req.body as ParsedItem;
+
+        if (!rawItem.itemCode || !rawItem.itemName) {
+            throw new ApiError(400, "itemCode and itemName are required");
+        }
+        if (isPlaceholder(rawItem.itemCode) || isPlaceholder(rawItem.itemName)) {
+            throw new ApiError(400, `Extracted item has placeholder values — itemCode: "${rawItem.itemCode}", itemName: "${rawItem.itemName}". Please verify extraction.`);
+        }
+
+        const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false });
+        if (!rfq) throw new ApiError(404, "RFQ not found");
+
+        let item = await Item.findOne({ itemCode: rawItem.itemCode });
+        if (!item) {
+            item = await Item.create({
+                itemCode: rawItem.itemCode,
+                itemName: rawItem.itemName,
+                itemDesc: rawItem.itemDesc || rawItem.itemName,
+                itemType: rawItem.itemType || "UNIT",
+                size: "",
+                isDeleted: false,
+            });
+        } else if (item.isDeleted) {
+            item.isDeleted = false;
+            item.itemName = rawItem.itemName || item.itemName;
+            item.itemDesc = rawItem.itemDesc || rawItem.itemName || item.itemDesc;
+            await item.save();
+        }
+
+        const techSpecs = await ItemTechSpecs.create({
+            material: rawItem.technical?.material || "",
+            diameter: rawItem.technical?.diameter || "",
+            length: rawItem.technical?.length || "",
+            weight: rawItem.technical?.weight || "",
+            grade: rawItem.technical?.grade || "",
+        });
+
+        const commercialSpecs = await CommercialSpecs.create({
+            currency: "INR",
+            rawMaterialCost: 0,
+            laborCost: 0,
+            profitMargin: 0,
+            totalCost: 0,
+            packingCost: 0,
+            shippingCost: 0,
+            sellingPrice: 0,
+            otherCosts: 0,
+        });
+
+        const rfqItem = await RFQItems.create({
+            serialNumber: rawItem.serialNumber || "",
+            item: item._id,
+            quantity: rawItem.quantity || 1,
+            drawingNumber: rawItem.drawingNumber || "",
+            drawingUrl: "",
+            itemTechSpecs: techSpecs._id,
+            commercialSpecs: commercialSpecs._id,
+            isDeleted: false,
+        });
+
+        await rfq.updateOne({
+            $push: { items: rfqItem._id },
+            updatedBy: req.user?._id?.toString() || "",
+        });
+
+        res.status(201).json(new ApiResponse(201, rfqItem, "Item added to RFQ successfully"));
+    }
+);
+
+// POST /api/v1/rfp-extract/apply/:rfqId
+// Apply extracted items to an existing RFQ (replaces current items)
+export const applyExtractionToRfq = asyncHandler(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { rfqId } = req.params;
+        const { items } = req.body;
+
+        if (!items || !Array.isArray(items) || items.length === 0) {
+            throw new ApiError(400, "At least one item is required");
+        }
+
+        const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false });
+        if (!rfq) throw new ApiError(404, "RFQ not found");
+
+        const oldItemIds = (rfq.items as unknown as string[]).map(String);
+        const createdRfqItemIds: string[] = [];
+
+        for (const rawItem of items as ParsedItem[]) {
+            if (isPlaceholder(rawItem.itemCode) || isPlaceholder(rawItem.itemName)) {
+                throw new ApiError(400, `Item has placeholder values — itemCode: "${rawItem.itemCode ?? ""}", itemName: "${rawItem.itemName ?? ""}". Extraction may have failed for this item.`);
+            }
+            let item = await Item.findOne({ itemCode: rawItem.itemCode });
+            if (!item) {
+                if (!rawItem.itemCode || !rawItem.itemName) {
+                    throw new ApiError(400, `Item code and name are required: ${rawItem.itemCode || "(empty)"}`);
+                }
+                item = await Item.create({
+                    itemCode: rawItem.itemCode,
+                    itemName: rawItem.itemName,
+                    itemDesc: rawItem.itemDesc || rawItem.itemName,
+                    itemType: rawItem.itemType || "UNIT",
+                    size: "",
+                    isDeleted: false,
+                });
+            } else if (item.isDeleted) {
+                item.isDeleted = false;
+                item.itemName = rawItem.itemName || item.itemName;
+                item.itemDesc = rawItem.itemDesc || rawItem.itemName || item.itemDesc;
+                await item.save();
+            }
+
+            const techSpecs = await ItemTechSpecs.create({
+                material: rawItem.technical?.material || "",
+                diameter: rawItem.technical?.diameter || "",
+                length: rawItem.technical?.length || "",
+                weight: rawItem.technical?.weight || "",
+                grade: rawItem.technical?.grade || "",
+            });
+
+            const commercialSpecs = await CommercialSpecs.create({
+                currency: "INR",
+                rawMaterialCost: 0,
+                laborCost: 0,
+                profitMargin: 0,
+                totalCost: 0,
+                packingCost: 0,
+                shippingCost: 0,
+                sellingPrice: 0,
+                otherCosts: 0,
+            });
+
+            const rfqItem = await RFQItems.create({
+                serialNumber: rawItem.serialNumber || "",
+                item: item._id,
+                quantity: rawItem.quantity || 1,
+                drawingNumber: enrichDrawingNumber(rawItem.drawingNumber || "", rawItem.itemDesc),
+                drawingUrl: "",
+                itemTechSpecs: techSpecs._id,
+                commercialSpecs: commercialSpecs._id,
+                isDeleted: false,
+            });
+
+            createdRfqItemIds.push(rfqItem._id.toString());
+        }
+
+        await rfq.updateOne({ items: createdRfqItemIds, updatedBy: req.user?._id?.toString() || "" });
+
+        // Soft-delete old items
+        if (oldItemIds.length > 0) {
+            await RFQItems.updateMany({ _id: { $in: oldItemIds } }, { isDeleted: true });
+        }
+
+        const populatedRfq = await RFQ.findById(rfq._id).populate({
+            path: "items",
+            match: { isDeleted: false },
+            populate: [{ path: "item" }, { path: "itemTechSpecs" }, { path: "commercialSpecs" }],
+        });
+
+        res.status(200).json(new ApiResponse(200, populatedRfq, "RFQ items updated from extracted data"));
     }
 );
 

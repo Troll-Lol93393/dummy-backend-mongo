@@ -1,5 +1,5 @@
-import { extractTextFromFile, parseRfpDocument, ParsedRfpData } from "./docParser";
-import { extractWithAI, isAIAvailable, ProviderConfig } from "./aiExtractor";
+import { extractTextFromFile, parseRfpDocument, ParsedRfpData, ParsedItem } from "./docParser";
+import { extractWithAI, extractSingleItemWithAI, isAIAvailable, ProviderConfig } from "./aiExtractor";
 
 export interface ExtractionResult {
     success: boolean;
@@ -149,6 +149,50 @@ export async function runExtractionPipeline(
         data: manualData,
         errors,
     };
+}
+
+export interface SingleItemExtractionResult {
+    success: boolean;
+    layer: "AI" | "MANUAL";
+    confidence: number;
+    item: ParsedItem | null;
+    errors: string[];
+}
+
+export async function runSingleItemExtractionPipeline(
+    filePath: string,
+    originalFilename: string,
+    serialNumber: string
+): Promise<SingleItemExtractionResult> {
+    const errors: string[] = [];
+    let rawText = "";
+
+    try {
+        rawText = await extractTextFromFile(filePath);
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Text extraction failed";
+        errors.push(`Text extraction error: ${msg}`);
+    }
+
+    if (rawText) {
+        const activeProviders = getAIProviders().filter(p => p.apiKey !== "");
+        for (const provider of activeProviders) {
+            try {
+                const aiUp = await isAIAvailable(provider);
+                if (!aiUp) { errors.push(`${provider.name} not available`); continue; }
+
+                const result = await extractSingleItemWithAI(rawText, originalFilename, serialNumber, provider);
+                if (result.success && result.item) {
+                    return { success: true, layer: "AI", confidence: result.confidence, item: result.item, errors: [] };
+                }
+                errors.push(`${provider.name} returned low confidence (${result.confidence}%)`);
+            } catch (err: unknown) {
+                errors.push(`${provider.name} error: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+    }
+
+    return { success: false, layer: "MANUAL", confidence: 0, item: null, errors };
 }
 
 function calculateParserConfidence(data: ParsedRfpData): number {

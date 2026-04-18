@@ -138,6 +138,123 @@ export async function extractWithAI(
     }
 }
 
+// Focused single-item system prompt — much shorter to save tokens
+const SINGLE_ITEM_SYSTEM_PROMPT = `You are extracting ONE specific item from an RFP document.
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "serialNumber": "string - exact section number from the document (e.g. '7.3')",
+  "itemCode": "string - 10-digit code starting with 2100 (extracted from 18-digit code in document)",
+  "itemName": "string - short item name",
+  "itemDesc": "string - full description",
+  "itemType": "UNIT or SET or ASSEMBLY",
+  "uom": "string - unit of measure (EA, KG, MTR, NOS, SET, etc)",
+  "quantity": number,
+  "drawingNumber": "string - drawing/DRG number if mentioned",
+  "technical": {
+    "material": "string - material/MOC",
+    "diameter": "string",
+    "length": "string",
+    "weight": "string",
+    "grade": "string"
+  }
+}
+If a field is not found use empty string or 0.`;
+
+export async function extractSingleItemWithAI(
+    rawText: string,
+    originalFilename: string,
+    serialNumber: string,
+    provider: ProviderConfig
+): Promise<{ success: boolean; item: ParsedItem | null; confidence: number }> {
+    // Extract a focused slice of text around the serial number to save tokens
+    const focusedText = extractFocusedText(rawText, serialNumber);
+    const userMessage = `FILENAME: ${originalFilename}\nEXTRACT ITEM WITH SERIAL NUMBER: ${serialNumber}\n\nDOCUMENT TEXT:\n${focusedText}`;
+
+    const extraHeaders: Record<string, string> =
+        provider.name === "OpenRouter"
+            ? { "HTTP-Referer": "https://sheth-engg-backend-pvzq.onrender.com" }
+            : {};
+
+    try {
+        const response = await retryWithBackoff(
+            () =>
+                axios.post(
+                    provider.apiUrl,
+                    {
+                        model: provider.model,
+                        messages: [
+                            { role: "system", content: SINGLE_ITEM_SYSTEM_PROMPT },
+                            { role: "user", content: userMessage },
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 600,
+                        response_format: { type: "json_object" },
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${provider.apiKey}`,
+                            "Content-Type": "application/json",
+                            ...extraHeaders,
+                        },
+                        timeout: 30000,
+                    }
+                ),
+            { maxRetries: 0, initialDelayMs: 1000 }
+        );
+
+        const aiResponse = response.data?.choices?.[0]?.message?.content;
+        if (!aiResponse) return { success: false, item: null, confidence: 0 };
+
+        const jsonStr = extractJsonFromResponse(aiResponse);
+        if (!jsonStr) return { success: false, item: null, confidence: 0 };
+
+        const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+        const tech = (parsed.technical || {}) as Record<string, unknown>;
+
+        const item: ParsedItem = {
+            serialNumber: String(parsed.serialNumber || serialNumber),
+            itemCode: String(parsed.itemCode || ""),
+            itemName: String(parsed.itemName || ""),
+            itemDesc: String(parsed.itemDesc || ""),
+            itemType: validateItemType(String(parsed.itemType || "UNIT")),
+            uom: String(parsed.uom || ""),
+            quantity: Number(parsed.quantity) || 0,
+            drawingNumber: String(parsed.drawingNumber || ""),
+            technical: {
+                material: String(tech.material || ""),
+                hardness: String(tech.hardness || ""),
+                surfaceFinish: String(tech.surfaceFinish || ""),
+                heatTreatment: String(tech.heatTreatment || ""),
+                diameter: String(tech.diameter || ""),
+                length: String(tech.length || ""),
+                weight: String(tech.weight || ""),
+                grade: String(tech.grade || ""),
+            },
+        };
+
+        const confidence = item.itemCode ? 80 : item.itemName && item.quantity > 0 ? 50 : 20;
+        return { success: confidence >= 50, item, confidence };
+    } catch (error: unknown) {
+        throw error;
+    }
+}
+
+// Extract a focused slice of text around the target serial number to minimise token usage
+function extractFocusedText(rawText: string, serialNumber: string): string {
+    const escaped = serialNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|\\n)\\s*${escaped}[\\s\\t.:]`, "m");
+    const match = pattern.exec(rawText);
+    if (match && match.index !== undefined) {
+        const start = Math.max(0, match.index - 200);
+        const end = Math.min(rawText.length, match.index + 3000);
+        return rawText.substring(start, end);
+    }
+    // Fallback: last 4000 chars (item table is usually at the end)
+    return rawText.length > 8000
+        ? rawText.substring(rawText.length - 4000)
+        : rawText;
+}
+
 // Check if the given provider API is reachable and key is valid
 export async function isAIAvailable(provider: ProviderConfig): Promise<boolean> {
     try {
