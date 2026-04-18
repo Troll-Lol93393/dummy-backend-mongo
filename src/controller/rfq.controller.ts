@@ -5,6 +5,12 @@ import { ApiResponse } from "../utils/apiResponse";
 import { RFQ } from "../models/rfq.models";
 import { Costing } from "../models/costing.model";
 import { RFQItems } from "../models/rfqItems.model";
+import { Email } from "../models/email.model";
+import { discoverAribaDrawings } from "../services/email/aribaScraperService";
+import { getEmailSettings } from "../models/emailSettings.model";
+import { decryptPassword } from "../utils/emailEncryption";
+import { uploadFileToCloudinary } from "../utils/cloudinary";
+import fs from "fs";
 
 export const createRFQ = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     const { prNumber, startDate, dueDate, ownerName, companyName, items, location } = req.body;
@@ -256,6 +262,106 @@ export const deleteRFQ = asyncHandler(async (req: Request, res: Response, next: 
     const { rfqId } = req.params;
     const rfq = await RFQ.findByIdAndUpdate(rfqId, { isDeleted: true }, { new: true });
     res.status(200).json(new ApiResponse(200, rfq, "RFQ deleted successfully"));
+});
+
+export const getLinkedEmail = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqId } = req.params;
+    const email = await Email.findOne({ linkedRfq: rfqId, isDeleted: false })
+        .select("_id subject from date aribaLinks");
+    res.status(200).json(new ApiResponse(200, email || null, email ? "Linked email found" : "No linked email"));
+});
+
+// POST /api/v1/rfq/backfill-document-urls
+// One-time migration: copy downloadedDocUrl from linked emails to RFQs that have no documentUrl
+export const backfillDocumentUrls = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const rfqsWithoutDoc = await RFQ.find({ isDeleted: false, documentUrl: { $exists: false } }).select("_id").lean();
+    const rfqIds = rfqsWithoutDoc.map(r => r._id);
+
+    if (rfqIds.length === 0) {
+        res.status(200).json(new ApiResponse(200, { updated: 0, total: 0 }, "All RFQs already have documentUrl"));
+        return;
+    }
+
+    const emails = await Email.find({
+        linkedRfq: { $in: rfqIds },
+        isDeleted: false,
+        "aribaLinks.downloadStatus": "DOWNLOADED",
+    }).select("linkedRfq aribaLinks attachments").lean();
+
+    let updated = 0;
+    for (const email of emails) {
+        const ariba = email.aribaLinks?.find((l: { downloadedDocUrl?: string }) => l.downloadedDocUrl);
+        const attachment = !ariba ? email.attachments?.find((a: { cloudinaryUrl?: string; contentType?: string }) => a.cloudinaryUrl && (a.contentType === "application/pdf" || a.contentType?.includes("word"))) : null;
+        const docUrl = ariba?.downloadedDocUrl || attachment?.cloudinaryUrl;
+        if (docUrl && email.linkedRfq) {
+            await RFQ.findByIdAndUpdate(email.linkedRfq, { $set: { documentUrl: docUrl } });
+            updated++;
+        }
+    }
+
+    res.status(200).json(new ApiResponse(200, { updated, total: rfqIds.length }, `Backfilled documentUrl on ${updated} of ${rfqIds.length} RFQ(s)`));
+});
+
+// POST /api/v1/rfq/:rfqId/sync-drawings
+// Manually trigger Ariba drawing discovery for an RFQ and sync results to it
+export const syncDrawings = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const { rfqId } = req.params;
+
+    const rfq = await RFQ.findOne({ _id: rfqId, isDeleted: false });
+    if (!rfq) throw new ApiError(404, "RFQ not found");
+
+    const email = await Email.findOne({ linkedRfq: rfqId, isDeleted: false }).select("_id aribaLinks");
+    if (!email || !email.aribaLinks || email.aribaLinks.length === 0) {
+        throw new ApiError(404, "No linked email with Ariba links found for this RFQ");
+    }
+
+    const aribaLink = email.aribaLinks.find((l: { url?: string }) => l.url);
+    if (!aribaLink?.url) throw new ApiError(404, "No Ariba URL found on linked email");
+
+    const settings = await getEmailSettings();
+    if (!settings.aribaUsername || !settings.aribaPassword) {
+        throw new ApiError(500, "Ariba credentials not configured in Email Settings");
+    }
+
+    const aribaPassword = decryptPassword(settings.aribaPassword);
+    const result = await discoverAribaDrawings(aribaLink.url, settings.aribaUsername, aribaPassword);
+
+    const uploadedDrawings: { url: string; filename: string }[] = [];
+    for (const drawing of result.drawings) {
+        if (fs.existsSync(drawing.filePath)) {
+            try {
+                const cloudResult = await uploadFileToCloudinary(drawing.filePath);
+                if (cloudResult?.secure_url) {
+                    uploadedDrawings.push({ url: cloudResult.secure_url, filename: drawing.filename });
+                }
+            } catch { /* non-critical */ }
+        }
+    }
+
+    // Cleanup temp dirs
+    if (fs.existsSync(result.downloadDir)) {
+        fs.rmSync(result.downloadDir, { recursive: true, force: true });
+    }
+    if (result.screenshotPath && fs.existsSync(result.screenshotPath)) {
+        try { fs.unlinkSync(result.screenshotPath); } catch { /* ignore */ }
+    }
+
+    if (uploadedDrawings.length > 0) {
+        await RFQ.findByIdAndUpdate(rfqId, { $set: { drawings: uploadedDrawings } });
+        // Also persist on the email's ariba link
+        aribaLink.drawings = uploadedDrawings;
+        await email.save();
+    }
+
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            { drawings: uploadedDrawings, candidateLinks: result.candidateLinks },
+            uploadedDrawings.length > 0
+                ? `Synced ${uploadedDrawings.length} drawing(s) to RFQ`
+                : `No drawings found (${result.candidateLinks.length} candidate link(s) on page)`
+        )
+    );
 });
 
 function compareSerialNumbers(a: string, b: string): number {

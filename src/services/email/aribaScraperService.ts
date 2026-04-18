@@ -1,4 +1,5 @@
 import { Email } from "../../models/email.model";
+import { RFQ } from "../../models/rfq.models";
 import { getEmailSettings } from "../../models/emailSettings.model";
 import { decryptPassword } from "../../utils/emailEncryption";
 import { uploadFileToCloudinary } from "../../utils/cloudinary";
@@ -191,7 +192,6 @@ export async function downloadAribaDocSync(
 
                 await new Promise(resolve => setTimeout(resolve, 500));
                 await page.mouse.click(btnCoords.x, btnCoords.y);
-                logger.info("ARIBA", `Clicked 'Print Event Information' at (${btnCoords.x}, ${btnCoords.y}) — attempt ${attempt + 1}`);
 
                 // Wait for file to appear in download directory
                 const maxWait = 45000;
@@ -206,11 +206,10 @@ export async function downloadAribaDocSync(
                         f => !f.endsWith(".crdownload") && !f.endsWith(".tmp")
                     );
                     if (completed.length > 0) {
-                        logger.info("ARIBA", `Download complete: ${completed[0]} (${elapsed / 1000}s)`);
+                        logger.info("ARIBA", `Download complete: ${completed[0]}`);
                         downloadSuccess = true;
                         break;
                     }
-                    logger.info("ARIBA", `${elapsed / 1000}s - waiting for download...`);
                 }
 
                 if (downloadSuccess) break;
@@ -328,6 +327,13 @@ export async function processAribaDownloads(): Promise<number> {
                     aribaLink.downloadedDocFilename = result.filename;
                     aribaLink.downloadStatus = "DOWNLOADED";
                     downloaded++;
+                    // Sync document URL to the linked RFQ so it is available for re-extraction
+                    if (email.linkedRfq) {
+                        await RFQ.findByIdAndUpdate(email.linkedRfq, {
+                            $set: { documentUrl: cloudResult.secure_url },
+                        });
+                        logger.info("ARIBA", `Synced documentUrl to RFQ ${email.linkedRfq}`);
+                    }
                 } else {
                     aribaLink.downloadStatus = "FAILED";
                     aribaLink.errorMessage = "Cloudinary upload failed";
@@ -368,6 +374,13 @@ export async function processAribaDownloads(): Promise<number> {
                         if (uploadedDrawings.length > 0) {
                             aribaLink.drawings = uploadedDrawings;
                             logger.info("ARIBA", `Stored ${uploadedDrawings.length} drawing(s) on email ${email._id}`);
+                            // Sync drawings to the linked RFQ so they appear on the RFQ view
+                            if (email.linkedRfq) {
+                                await RFQ.findByIdAndUpdate(email.linkedRfq, {
+                                    $set: { drawings: uploadedDrawings },
+                                });
+                                logger.info("ARIBA", `Synced drawings to RFQ ${email.linkedRfq}`);
+                            }
                         }
                         // Cleanup drawing temp dir and screenshot
                         if (fs.existsSync(drawingResult.downloadDir)) {
@@ -460,8 +473,25 @@ export async function discoverAribaDrawings(
         const page = await browser.newPage();
         await page.setViewport({ width: 1920, height: 1080 });
 
-        const cdp = await browser.target().createCDPSession();
+        // Set download behavior at page level (most reliable)
+        const cdp = await page.createCDPSession();
         await cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir, eventsEnabled: true });
+
+        // Also apply download config to ANY new tab that opens during the session
+        // (Ariba sometimes opens a new tab to trigger a download)
+        browser.on("targetcreated", async (target: any) => {
+            try {
+                const newPage = await target.page();
+                if (newPage) {
+                    const newCdp = await newPage.createCDPSession();
+                    await newCdp.send("Browser.setDownloadBehavior", {
+                        behavior: "allow",
+                        downloadPath: downloadDir,
+                        eventsEnabled: true,
+                    });
+                }
+            } catch { /* non-critical */ }
+        });
 
         page.setDefaultTimeout(60000);
         await page.goto(aribaUrl, { waitUntil: "networkidle2" }).catch(() => {});
@@ -508,7 +538,6 @@ export async function discoverAribaDrawings(
 
         const pageBodyText: string = await page.evaluate(`document.body.innerText || ""`).catch(() => "") as string;
         const landedOnDashboard = pageBodyText.includes("Status: Open") || pageBodyText.includes("Status: Completed (");
-        logger.info("ARIBA_DRAWINGS", `Settled: ${page.url().substring(0, 80)} | dashboard: ${landedOnDashboard}`);
 
         if (landedOnDashboard) {
             const openRowCoords: { x: number; y: number } | null = await page.evaluate(`(function() {
@@ -596,15 +625,85 @@ export async function discoverAribaDrawings(
             })(${JSON.stringify(searchText)})`).catch(() => null) as { x: number; y: number } | null;
         };
 
+        // Keywords that indicate a document is NOT a drawing (guidelines, T&C, commercial docs, etc.)
+        // Case-insensitive substring match. Files matching ANY of these will be skipped.
+        const NON_DRAWING_KEYWORDS = [
+            "guideline", "gtc", "terms and condition", "terms & condition",
+            "general terms", "general condition", "commercial", "instruction",
+            "policy", "procedure", "compliance", "code of conduct",
+        ];
+        // These extensions are always treated as drawing archives regardless of filename
+        const ALWAYS_DRAWING_EXTS = [".dwg", ".dxf", ".zip"];
+
+        const isLikelyDrawing = (fname: string): boolean => {
+            const lower = fname.toLowerCase();
+            const extMatch = lower.match(/\.[a-z0-9]+$/);
+            const ext = extMatch ? extMatch[0] : "";
+            if (ALWAYS_DRAWING_EXTS.includes(ext)) return true;
+            return !NON_DRAWING_KEYWORDS.some(kw => lower.includes(kw));
+        };
+
         const candidateLinks: string[] = await collectFilenames();
 
-        // Navigate to "Technical Specifications" section
+        // Navigate to "Technical Specifications" tab
         const techCoords = await findByText("Technical Specificat...") ?? await findByText("Technical Specifications");
         if (techCoords && techCoords.x > 0) {
             await page.mouse.click(techCoords.x, techCoords.y);
-            // Poll for filenames to appear (up to 12s) instead of fixed wait
+            await new Promise(r => setTimeout(r, 3000));
+        }
+
+        // Within Technical Specifications, find and expand section 6.1
+        // "Drawing Specifications and Scope of Work(If Needed)" — drawings are always here
+        const drawingsSectionOpened = await page.evaluate(`(function() {
+            var targets = [
+                'Drawing Specifications and Scope of Work',
+                'Drawing Specification',
+                'Drawing Specifications',
+                'Scope of Work',
+            ];
+            var all = document.querySelectorAll('a, button, span, td, div, th');
+            for (var i = 0; i < all.length; i++) {
+                var text = (all[i].textContent || '').trim();
+                for (var t = 0; t < targets.length; t++) {
+                    if (text.indexOf(targets[t]) !== -1 && text.length < 120) {
+                        all[i].scrollIntoView({ block: 'center', behavior: 'instant' });
+                        return text;
+                    }
+                }
+            }
+            return null;
+        })()`).catch(() => null) as string | null;
+
+        if (drawingsSectionOpened) {
+            logger.info("ARIBA_DRAWINGS", `Found drawings section: "${drawingsSectionOpened}" — clicking`);
+            await new Promise(r => setTimeout(r, 300));
+            // Two-pass: scroll then measure coords
+            const secCoords = await page.evaluate(`(function(s) {
+                var all = document.querySelectorAll('a, button, span, td, div, th');
+                for (var i = 0; i < all.length; i++) {
+                    if ((all[i].textContent || '').trim().indexOf(s) !== -1 && (all[i].textContent || '').trim().length < 120) {
+                        var r = all[i].getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0) return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+                    }
+                }
+                return null;
+            })(${JSON.stringify(drawingsSectionOpened.substring(0, 40))})`).catch(() => null) as { x: number; y: number } | null;
+
+            if (secCoords && secCoords.x > 0) {
+                await page.mouse.click(secCoords.x, secCoords.y);
+                // Wait for attachments to appear in this subsection
+                let waited = 0;
+                while (waited < 12000) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    waited += 1000;
+                    if ((await collectFilenames()).length > 0) break;
+                }
+            }
+        } else {
+            logger.warn("ARIBA_DRAWINGS", "Drawing Specifications section not found — collecting from current view");
+            // Fallback: poll for any filenames after the tab click
             let waited = 0;
-            while (waited < 12000) {
+            while (waited < 8000) {
                 await new Promise(r => setTimeout(r, 1000));
                 waited += 1000;
                 if ((await collectFilenames()).length > 0) break;
@@ -618,11 +717,17 @@ export async function discoverAribaDrawings(
             await page.screenshot({ path: screenshotPath, fullPage: true });
         } catch { screenshotPath = null; }
 
-        const techSpecFilenames = await collectFilenames();
-        for (const f of techSpecFilenames) {
+        const allFilenames = await collectFilenames();
+        const techSpecFilenames = allFilenames.filter(isLikelyDrawing);
+        const skipped = allFilenames.filter(f => !isLikelyDrawing(f));
+
+        for (const f of allFilenames) {
             if (candidateLinks.indexOf(f) === -1) candidateLinks.push(f);
         }
-        logger.info("ARIBA_DRAWINGS", `Attachments found: [${techSpecFilenames.join(", ")}]`);
+        if (skipped.length > 0) {
+            logger.info("ARIBA_DRAWINGS", `Skipped non-drawing files: [${skipped.join(", ")}]`);
+        }
+        logger.info("ARIBA_DRAWINGS", `Drawing attachments to download: [${techSpecFilenames.join(", ")}]`);
 
         const drawings: { filePath: string; filename: string }[] = [];
 
@@ -674,14 +779,89 @@ export async function discoverAribaDrawings(
             })()`).catch(() => null) as { x: number; y: number } | null;
 
             if (dlBtn && isPageAlive(page)) {
-                logger.info("ARIBA_DRAWINGS", `Clicking download button for '${fname}' at (${dlBtn.x.toFixed(0)}, ${dlBtn.y.toFixed(0)})`);
+                // Intercept the HTTP response directly — more reliable than CDP filesystem polling
+                // Works whether Ariba triggers the download via window.location, fetch, XHR, or anchor
+                let capturedBuffer: Buffer | null = null;
+                let capturedFilename = fname;
+
+                const responseHandler = async (response: any) => {
+                    if (capturedBuffer) return;
+                    try {
+                        const headers = response.headers() as Record<string, string>;
+                        const cd = (headers["content-disposition"] || "").toLowerCase();
+                        const ct = (headers["content-type"] || "").toLowerCase();
+                        const isFile =
+                            cd.includes("attachment") ||
+                            ct.includes("zip") ||
+                            ct.includes("octet-stream") ||
+                            ct.includes("x-download") ||
+                            ct.includes("dwg") ||
+                            ct.includes("dxf");
+                        if (isFile) {
+                            capturedBuffer = await response.buffer();
+                            const m = (headers["content-disposition"] || "").match(
+                                /filename[*]?=(?:UTF-8'')?["']?([^"';\r\n]+)["']?/i
+                            );
+                            if (m && m[1]) capturedFilename = decodeURIComponent(m[1].trim().replace(/['"]/g, ""));
+                            logger.info("ARIBA_DRAWINGS", `Response intercepted: ${capturedFilename} (${capturedBuffer!.length} bytes)`);
+                        }
+                    } catch { /* ignore */ }
+                };
+
+                page.on("response", responseHandler);
                 const snapshot = fs.existsSync(downloadDir) ? fs.readdirSync(downloadDir) : [];
                 await page.mouse.click(dlBtn.x, dlBtn.y);
-                const added = await pollForNewFiles(snapshot, 30000);
-                for (const f of added) {
-                    drawings.push({ filePath: path.join(downloadDir, f), filename: f });
-                    logger.info("ARIBA_DRAWINGS", `Downloaded: ${f}`);
+
+                // Phase 1: wait up to 30s for download to START (.crdownload appears or response captured)
+                let startElapsed = 0;
+                while (startElapsed < 30000) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    startElapsed += 1000;
+                    if (capturedBuffer) break;
+                    const dir = fs.existsSync(downloadDir) ? fs.readdirSync(downloadDir) : [];
+                    if (dir.some(f => !snapshot.includes(f))) break; // new file (partial or complete)
                 }
+
+                // Phase 2: if response interceptor got it, save and done
+                if (capturedBuffer) {
+                    const destPath = path.join(downloadDir, capturedFilename);
+                    fs.writeFileSync(destPath, capturedBuffer);
+                    drawings.push({ filePath: destPath, filename: capturedFilename });
+                    logger.info("ARIBA_DRAWINGS", `Saved via response intercept: ${capturedFilename}`);
+                } else {
+                    // Phase 3: CDP download in progress — wait for .crdownload to become a complete file (up to 5 min)
+                    const MAX_COMPLETE_WAIT = 300000;
+                    let completeElapsed = 0;
+                    let downloadHandled = false;
+
+                    while (completeElapsed < MAX_COMPLETE_WAIT && !downloadHandled) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        completeElapsed += 2000;
+
+                        const dirNow = fs.existsSync(downloadDir)
+                            ? fs.readdirSync(downloadDir).filter(f => !f.endsWith(".crdownload") && !f.endsWith(".tmp"))
+                            : [];
+                        const added = dirNow.filter(f => !snapshot.includes(f));
+                        if (added.length > 0) {
+                            for (const f of added) {
+                                drawings.push({ filePath: path.join(downloadDir, f), filename: f });
+                                logger.info("ARIBA_DRAWINGS", `Downloaded: ${f} (${completeElapsed / 1000}s)`);
+                            }
+                            downloadHandled = true;
+                        } else {
+                            // Log progress every 30s so we know it's still running
+                            if (completeElapsed % 60000 === 0) {
+                                logger.info("ARIBA_DRAWINGS", `Still downloading '${fname}'... ${completeElapsed / 1000}s elapsed`);
+                            }
+                        }
+                    }
+
+                    if (!downloadHandled) {
+                        logger.warn("ARIBA_DRAWINGS", `Download did not complete after 5 min for '${fname}'`);
+                    }
+                }
+
+                page.off("response", responseHandler);
             } else {
                 logger.warn("ARIBA_DRAWINGS", `Download button not visible for '${fname}' — skipping`);
             }

@@ -7,6 +7,9 @@ import {
     deleteRFQ,
     markAsQuoted,
     markAsRegret,
+    getLinkedEmail,
+    backfillDocumentUrls,
+    syncDrawings,
 } from "../controller/rfq.controller";
 import { getPendingSummary, markReviewed } from "../controller/pendingRfq.controller";
 import { upload } from "../middlewares/multer.middleware";
@@ -20,10 +23,13 @@ rfqRoutes.use(verifyJWT);
 // Pending RFQ routes (before /:rfqId to avoid param conflicts)
 rfqRoutes.get("/pending-summary", verifyJWT, getPendingSummary);
 rfqRoutes.patch("/:rfqId/mark-reviewed", verifyJWT, markReviewed);
+rfqRoutes.post("/backfill-document-urls", verifyJWT, backfillDocumentUrls);
 
 // Public authenticated routes
 rfqRoutes.get("/all", verifyJWT, getRFQs);
 rfqRoutes.get("/:rfqId", verifyJWT, getRFQ);
+rfqRoutes.get("/:rfqId/linked-email", verifyJWT, getLinkedEmail);
+rfqRoutes.post("/:rfqId/sync-drawings", verifyJWT, syncDrawings);
 
 // User can create RFQs
 rfqRoutes.post("/", verifyJWT, createRFQ);
