@@ -54,6 +54,7 @@ import { staffRoutes } from "./routes/staff.routes";
 import { notificationRoutes } from "./routes/notification.routes";
 import { auditLogRoutes } from "./routes/auditLog.routes";
 import { emailRoutes } from "./routes/email.routes";
+import salesRoutes from "./routes/sales.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -74,6 +75,7 @@ app.use("/api/v1/staff", staffRoutes);
 app.use("/api/v1/notification", notificationRoutes);
 app.use("/api/v1/audit-logs", auditLogRoutes);
 app.use("/api/v1/email", emailRoutes);
+app.use("/api/v1/sales", salesRoutes);
 
 // Health check endpoint — designed for UptimeRobot (every 5 minutes)
 // Returns detailed system health for monitoring and keeps Render active
