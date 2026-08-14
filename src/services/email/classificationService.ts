@@ -4,6 +4,7 @@ import { RFQ } from "../../models/rfq.models";
 import { PORegister } from "../../models/poRegister.model";
 import { logger } from "../../utils/logger";
 import { retryWithBackoff } from "../../utils/retryWithBackoff";
+import { extractDispatchRequests } from "./dispatchRequestExtractionService";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -19,6 +20,7 @@ Classify each email into exactly ONE of these categories:
 - PO_DISCUSSION: Discussion/queries about an EXISTING Purchase Order. Keywords: "regarding PO", "query about order", "PO status"
 - DELIVERY_SCHEDULE: Material delivery confirmations, goods receipt, dispatch. Keywords: "goods receipt received", "material received", "material receipt", "delivery note", "dispatch", "shipment", "GRN"
 - MATERIAL_NOT_RECEIVED: Complaints about missing or delayed material. Keywords: "not received", "material missing", "pending delivery", "material not received"
+- DISPATCH_STATUS_REQUEST: Customer is PROACTIVELY ASKING for the current dispatch/shipment status of one or more POs (not complaining, not confirming receipt). Keywords: "dispatch status", "share the dispatch status", "kindly update dispatch", "status of dispatch", "when will be dispatched", "expected dispatch date", "consignment status", "please share status", "material status update", "tracking details", "kindly confirm dispatch"
 - DRAWING_DOCUMENT: Drawing/document sharing (technical docs, specs). Keywords: "drawing", "attached document", "technical specification"
 - GENERAL: Any other vendor communication that doesn't fit above
 
@@ -152,7 +154,7 @@ function extractPrNumbersFromText(text: string): string[] {
 /**
  * Extract PO numbers from text (patterns: "PO for NO.: 4100617702", "PO No. 4100617702", "PO Number 4100617702").
  */
-function extractPoNumbersFromText(text: string): string[] {
+export function extractPoNumbersFromText(text: string): string[] {
     const patterns = [
         /PO\s+(?:for\s+)?NO\.?\s*:?\s*(\d{10})/gi,
         /PO\s+(?:Number|No\.?)\s*:?\s*(\d{10})/gi,
@@ -209,6 +211,30 @@ const REVISION_KEYWORDS = [
     "update final no regret",
     "price revision",
     "counter offer",
+];
+
+/**
+ * Dispatch-status inquiry keywords — checked against subject + body since
+ * customers often use a generic subject ("PO 4100617702") and put the actual
+ * ask in the body. Deliberately distinct from DELIVERY_KEYWORDS (inbound
+ * receipt confirmations sent by others) and MATERIAL_NOT_RECEIVED (a
+ * complaint, not a routine status inquiry).
+ */
+const DISPATCH_STATUS_REQUEST_KEYWORDS = [
+    "dispatch status",
+    "share the dispatch status",
+    "kindly update dispatch",
+    "status of dispatch",
+    "when will be dispatched",
+    "expected dispatch date",
+    "consignment status",
+    "please share status",
+    "material status update",
+    "tracking details",
+    "kindly confirm dispatch",
+    "dispatch details",
+    "status of material",
+    "dispatch update",
 ];
 
 /** RFQ reminder keywords in subject */
@@ -278,7 +304,18 @@ async function preClassifyBySubject(
         return { category: "NEW_RFQ", poNumbers: [], prNumbers };
     }
 
-    // 5. Delivery / Material received
+    // 5. Dispatch status inquiry — checked against subject + body, since the
+    // ask is usually in the body even when the subject is just a PO number.
+    const combinedLower = combined.toLowerCase();
+    if (DISPATCH_STATUS_REQUEST_KEYWORDS.some(kw => combinedLower.includes(kw))) {
+        return {
+            category: "DISPATCH_STATUS_REQUEST",
+            poNumbers: extractPoNumbersFromText(combined),
+            prNumbers: [],
+        };
+    }
+
+    // 6. Delivery / Material received
     if (DELIVERY_KEYWORDS.some(kw => subjectLower.includes(kw))) {
         return {
             category: "DELIVERY_SCHEDULE",
@@ -287,7 +324,7 @@ async function preClassifyBySubject(
         };
     }
 
-    // 6. PO email — check if subject matches PO pattern
+    // 7. PO email — check if subject matches PO pattern
     const poMatch = subject.match(PO_SUBJECT_PATTERN);
     if (poMatch && poMatch[1]) {
         const poNumber = poMatch[1];
@@ -309,7 +346,7 @@ async function preClassifyBySubject(
         }
     }
 
-    // 7. Generic PO mention in subject (without specific pattern)
+    // 8. Generic PO mention in subject (without specific pattern)
     if (
         subjectLower.includes("purchase order") ||
         subjectLower.includes("po confirmation") ||
@@ -433,6 +470,10 @@ export async function classifyEmail(emailId: string): Promise<void> {
         // Auto-link to existing records
         const linkedRfqId = await findLinkedRfq(allPrNumbers);
         if (linkedRfqId) email.linkedRfq = linkedRfqId as unknown as typeof email.linkedRfq;
+
+        if (result.category === "DISPATCH_STATUS_REQUEST") {
+            email.dispatchRequests = await extractDispatchRequests(email);
+        }
 
         email.isProcessed = true;
         await email.save();

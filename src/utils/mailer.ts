@@ -1,15 +1,18 @@
 import nodemailer from "nodemailer";
+import MailComposer from "nodemailer/lib/mail-composer";
+import { getEmailSettings } from "../models/emailSettings.model";
+import { decryptPassword } from "./emailEncryption";
 
-let transporter: nodemailer.Transporter | null = null;
+let otpTransporter: nodemailer.Transporter | null = null;
 
-function getTransporter(): nodemailer.Transporter {
-    if (!transporter) {
+function getOtpTransporter(): nodemailer.Transporter {
+    if (!otpTransporter) {
         if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
             throw new Error(
                 "SMTP credentials not configured. Set SMTP_USER and SMTP_PASS in your .env file."
             );
         }
-        transporter = nodemailer.createTransport({
+        otpTransporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST || "smtp.gmail.com",
             port: Number(process.env.SMTP_PORT) || 587,
             secure: false,
@@ -19,7 +22,98 @@ function getTransporter(): nodemailer.Transporter {
             },
         });
     }
-    return transporter;
+    return otpTransporter;
+}
+
+export interface SendMailAddress {
+    name: string;
+    address: string;
+}
+
+export interface SendMailOptions {
+    to: string | SendMailAddress[];
+    cc?: string | SendMailAddress[];
+    subject: string;
+    html: string;
+    inReplyTo?: string;
+    references?: string[];
+}
+
+export interface SendMailResult {
+    messageId: string;
+    raw: Buffer;
+}
+
+/**
+ * A reply must go out from the mailbox that received the request so the
+ * customer's reply-to-the-reply threads back into the synced inbox — fall
+ * back to IMAP credentials when SMTP-specific ones aren't set, since most
+ * setups here use one Gmail account for both inbound sync and outbound send.
+ */
+export async function getSmtpCredentials(): Promise<{
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    password: string;
+    fromName: string;
+    replySignatureHtml: string;
+}> {
+    const settings = await getEmailSettings();
+    const user = settings.smtpUser || settings.imapUser;
+    const encryptedPassword = settings.smtpPassword || settings.imapPassword;
+
+    if (!user || !encryptedPassword) {
+        throw new Error(
+            "Outbound email is not configured — set SMTP or IMAP credentials in Email Settings."
+        );
+    }
+
+    return {
+        host: settings.smtpHost || "smtp.gmail.com",
+        port: settings.smtpPort || 587,
+        secure: settings.smtpSecure ?? false,
+        user,
+        password: decryptPassword(encryptedPassword),
+        fromName: settings.fromName || "",
+        replySignatureHtml: settings.replySignatureHtml || "",
+    };
+}
+
+/**
+ * Generic send, separate from sendOtpEmail below. This is the only path used
+ * for customer-facing replies (threaded via inReplyTo/references).
+ */
+export async function sendMail(options: SendMailOptions): Promise<SendMailResult> {
+    const creds = await getSmtpCredentials();
+    const transport = nodemailer.createTransport({
+        host: creds.host,
+        port: creds.port,
+        secure: creds.secure,
+        auth: { user: creds.user, pass: creds.password },
+    });
+
+    const from = creds.fromName ? `"${creds.fromName}" <${creds.user}>` : creds.user;
+
+    // Build via MailComposer first so we have the exact raw MIME that was sent —
+    // callers use this to append the same message into the mailbox's Sent
+    // folder over IMAP, which nodemailer's SMTP transport doesn't do itself.
+    const node = new MailComposer({
+        from,
+        to: options.to,
+        cc: options.cc,
+        subject: options.subject,
+        html: options.html,
+        inReplyTo: options.inReplyTo,
+        references: options.references,
+    }).compile();
+
+    const raw = await node.build();
+    const messageId = node.messageId();
+
+    await transport.sendMail({ raw, envelope: node.getEnvelope() });
+
+    return { messageId, raw };
 }
 
 export async function sendOtpEmail(to: string, otp: string): Promise<void> {
@@ -77,7 +171,7 @@ export async function sendOtpEmail(to: string, otp: string): Promise<void> {
 </body>
 </html>`;
 
-    await getTransporter().sendMail({
+    await getOtpTransporter().sendMail({
         from: process.env.SMTP_FROM || process.env.SMTP_USER,
         to,
         subject: "Password Reset OTP",

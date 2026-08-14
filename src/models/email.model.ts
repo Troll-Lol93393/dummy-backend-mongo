@@ -9,6 +9,7 @@ export const EMAIL_CATEGORIES = [
     "PO_DISCUSSION",
     "DELIVERY_SCHEDULE",
     "MATERIAL_NOT_RECEIVED",
+    "DISPATCH_STATUS_REQUEST",
     "DRAWING_DOCUMENT",
     "GENERAL",
 ] as const;
@@ -34,6 +35,11 @@ export interface IAribaLink {
     downloadStatus: AribaDownloadStatus;
     errorMessage?: string;
     drawings: { url: string; filename: string }[];
+}
+
+export interface IDispatchRequestItem {
+    poNumber: string;
+    itemCode?: string;
 }
 
 export interface IEmailClassification {
@@ -63,10 +69,19 @@ export interface IEmail {
     subject: string;
     textBody: string;
     htmlBody: string;
+    // RFC 2822 threading headers, captured from the raw message so replies
+    // can be threaded correctly (In-Reply-To/References). Not backfillable
+    // for emails synced before this field existed — only new syncs get it.
+    inReplyTo?: string;
+    references: string[];
     date: Date;
     attachments: IEmailAttachment[];
     aribaLinks: IAribaLink[];
     classification: IEmailClassification;
+    // Only populated for DISPATCH_STATUS_REQUEST emails — one entry per
+    // PO/item the customer is asking about, extracted from body text and any
+    // attached spreadsheet. Feeds the matching + draft-reply phase.
+    dispatchRequests: IDispatchRequestItem[];
     linkedRfq?: mongoose.Types.ObjectId;
     isRead: boolean;
     isProcessed: boolean;
@@ -104,6 +119,14 @@ const aribaLinkSchema = new Schema<IAribaLink>(
         }],
     },
     { _id: true }
+);
+
+const dispatchRequestItemSchema = new Schema<IDispatchRequestItem>(
+    {
+        poNumber: { type: String, required: true },
+        itemCode: { type: String },
+    },
+    { _id: false }
 );
 
 const emailClassificationSchema = new Schema<IEmailClassification>(
@@ -159,6 +182,8 @@ const emailSchema = new Schema<IEmail>(
         subject: { type: String, default: "", trim: true },
         textBody: { type: String, default: "" },
         htmlBody: { type: String, default: "" },
+        inReplyTo: { type: String },
+        references: { type: [String], default: [] },
         date: { type: Date, required: true, index: true },
         attachments: [emailAttachmentSchema],
         aribaLinks: [aribaLinkSchema],
@@ -176,6 +201,7 @@ const emailSchema = new Schema<IEmail>(
                 },
             }),
         },
+        dispatchRequests: [dispatchRequestItemSchema],
         linkedRfq: { type: Schema.Types.ObjectId, ref: "RFQ", index: true },
         isRead: { type: Boolean, default: false, index: true },
         isProcessed: { type: Boolean, default: false, index: true },

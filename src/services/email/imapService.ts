@@ -24,7 +24,7 @@ const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024; // 5MB
 /**
  * Create an IMAP connection using stored settings.
  */
-function createImapClient(settings: IEmailSettings): ImapFlow {
+export function createImapClient(settings: IEmailSettings): ImapFlow {
     const password = settings.imapPassword ? decryptPassword(settings.imapPassword) : "";
     return new ImapFlow({
         host: settings.imapHost || "imap.gmail.com",
@@ -222,6 +222,12 @@ async function parseMessage(
         subject: parsed.subject || "",
         textBody: parsed.text || "",
         htmlBody,
+        inReplyTo: parsed.inReplyTo || undefined,
+        references: parsed.references
+            ? Array.isArray(parsed.references)
+                ? parsed.references
+                : [parsed.references]
+            : [],
         date: parsed.date || new Date(),
         attachments,
         aribaLinks,

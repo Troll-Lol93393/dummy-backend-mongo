@@ -7,6 +7,9 @@ import { Email, EMAIL_CATEGORIES, EmailCategory } from "../models/email.model";
 import { getEmailSettings } from "../models/emailSettings.model";
 import { encryptPassword } from "../utils/emailEncryption";
 import { syncEmails, testImapConnection, reExtractAribaLinks } from "../services/email/imapService";
+import { sendReply } from "../services/email/replySenderService";
+import { matchDispatchRequests } from "../services/email/dispatchMatchingService";
+import { generateDispatchStatusDraftHtml } from "../services/email/dispatchDraftGenerationService";
 import { classifyEmail, classifyUnprocessed } from "../services/email/classificationService";
 import { downloadSingleAribaDoc, downloadAribaDocSync } from "../services/email/aribaScraperService";
 import { decryptPassword } from "../utils/emailEncryption";
@@ -192,6 +195,70 @@ export const getEmailById = asyncHandler(async (req: Request, res: Response) => 
     if (!email) throw new ApiError(404, "Email not found");
 
     res.status(200).json(new ApiResponse(200, email, "Email fetched"));
+});
+
+// ─── Reply (draft-review send: human triggers this, nothing here auto-sends) ─
+
+export const sendReplyToEmail = asyncHandler(async (req: Request, res: Response) => {
+    const email = await Email.findOne({ _id: req.params.emailId, isDeleted: false });
+    if (!email) throw new ApiError(404, "Email not found");
+
+    const { to, cc, subject, htmlBody } = req.body as {
+        to?: string[];
+        cc?: string[];
+        subject?: string;
+        htmlBody?: string;
+    };
+
+    if (!Array.isArray(to) || to.length === 0) {
+        throw new ApiError(400, "At least one recipient (to) is required");
+    }
+    if (!subject || !subject.trim()) {
+        throw new ApiError(400, "Subject is required");
+    }
+    if (!htmlBody || !htmlBody.trim()) {
+        throw new ApiError(400, "Reply body is required");
+    }
+
+    const result = await sendReply({
+        sourceEmail: { messageId: email.messageId, references: email.references },
+        to: to.map(address => ({ name: "", address })),
+        cc: cc?.map(address => ({ name: "", address })),
+        subject,
+        htmlBody,
+    });
+
+    res.status(200).json(new ApiResponse(200, result, "Reply sent"));
+});
+
+// ─── Dispatch-status draft generation (review before send) ─────────────────
+
+export const generateDispatchDraft = asyncHandler(async (req: Request, res: Response) => {
+    const email = await Email.findOne({ _id: req.params.emailId, isDeleted: false });
+    if (!email) throw new ApiError(404, "Email not found");
+
+    if (email.classification.category !== "DISPATCH_STATUS_REQUEST") {
+        throw new ApiError(400, "Email is not classified as a dispatch status request");
+    }
+    if (!email.dispatchRequests || email.dispatchRequests.length === 0) {
+        throw new ApiError(400, "No PO/item requests were extracted from this email");
+    }
+
+    const matches = await matchDispatchRequests(email.dispatchRequests);
+    const html = generateDispatchStatusDraftHtml(matches);
+
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                subject: email.subject.toLowerCase().startsWith("re:") ? email.subject : `Re: ${email.subject}`,
+                to: [email.from.address].filter(Boolean),
+                htmlBody: html,
+                matches,
+            },
+            "Draft generated"
+        )
+    );
 });
 
 // ─── Sync ────────────────────────────────────────────────────────────────────
@@ -384,6 +451,13 @@ export const getSettings = asyncHandler(async (_req: Request, res: Response) => 
         hasImapPassword: !!settings.imapPassword,
         hasAribaPassword: !!settings.aribaPassword,
         senderWhitelist: settings.senderWhitelist || [],
+        smtpHost: settings.smtpHost,
+        smtpPort: settings.smtpPort,
+        smtpUser: settings.smtpUser,
+        smtpSecure: settings.smtpSecure,
+        fromName: settings.fromName,
+        replySignatureHtml: settings.replySignatureHtml,
+        hasSmtpPassword: !!settings.smtpPassword,
     };
 
     res.status(200).json(new ApiResponse(200, safe, "Settings fetched"));
@@ -403,6 +477,13 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
         aribaPassword,
         aribaAutoDownload,
         senderWhitelist,
+        smtpHost,
+        smtpPort,
+        smtpUser,
+        smtpPassword,
+        smtpSecure,
+        fromName,
+        replySignatureHtml,
     } = req.body;
 
     if (imapHost !== undefined) settings.imapHost = imapHost;
@@ -416,6 +497,13 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     if (aribaPassword) settings.aribaPassword = encryptPassword(aribaPassword);
     if (aribaAutoDownload !== undefined) settings.aribaAutoDownload = aribaAutoDownload;
     if (senderWhitelist !== undefined) settings.senderWhitelist = senderWhitelist;
+    if (smtpHost !== undefined) settings.smtpHost = smtpHost;
+    if (smtpPort !== undefined) settings.smtpPort = smtpPort;
+    if (smtpUser !== undefined) settings.smtpUser = smtpUser;
+    if (smtpPassword) settings.smtpPassword = encryptPassword(smtpPassword);
+    if (smtpSecure !== undefined) settings.smtpSecure = smtpSecure;
+    if (fromName !== undefined) settings.fromName = fromName;
+    if (replySignatureHtml !== undefined) settings.replySignatureHtml = replySignatureHtml;
 
     await settings.save();
 
