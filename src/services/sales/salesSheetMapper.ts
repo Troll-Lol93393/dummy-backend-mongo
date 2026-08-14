@@ -1,3 +1,5 @@
+import { getFinancialYearLabel } from "../../utils/financialYear";
+
 /**
  * Column mapping for the sales/dispatch CSV export.
  * Isolated here because the layout is fixed by the source system's export
@@ -70,6 +72,7 @@ export interface ParsedSalesRow {
     invoiceNumber: string;
     invoiceDate: Date;
     dispatchDate: Date;
+    financialYear: string;
     poReference: string;
     poNumber?: string;
     companyName: string;
@@ -190,6 +193,7 @@ export function mapRowToSales(
         // Dispatch date proxy: invoiced == dispatched in this workflow (e-way bill
         // is raised at the point of movement), confirmed with the business owner.
         dispatchDate: invoiceDate,
+        financialYear: getFinancialYearLabel(invoiceDate),
         poReference,
         poNumber: extractPoNumber(poReference),
         companyName: nullableString(row.PARTY) ?? "",

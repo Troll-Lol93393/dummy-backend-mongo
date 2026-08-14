@@ -4,6 +4,9 @@ export interface ISales {
     invoiceNumber: string;
     invoiceDate: Date;
     dispatchDate: Date;
+    // Indian financial year (Apr-Mar) the dispatch falls in, e.g. "2025-26".
+    // Computed at import time from dispatchDate — denormalized for cheap filtering.
+    financialYear: string;
     poReference: string;
     poNumber?: string;
     companyName: string;
@@ -54,6 +57,11 @@ const salesSchema: Schema<ISales> = new Schema(
         dispatchDate: {
             type: Date,
             required: true,
+        },
+        financialYear: {
+            type: String,
+            trim: true,
+            index: true,
         },
         poReference: {
             type: String,

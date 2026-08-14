@@ -20,6 +20,8 @@ import {
     updateSettings,
     testConnection,
     reExtractAriba,
+    sendReplyToEmail,
+    generateDispatchDraft,
 } from "../controller/email.controller";
 
 const router = Router();
@@ -55,5 +57,7 @@ router.post("/:emailId/create-rfq", createRfqFromEmail);
 router.post("/:emailId/download-and-extract", downloadAndExtractFromEmail);
 router.post("/:emailId/download-ariba/:linkIndex", downloadAribaDoc);
 router.post("/:emailId/download-all-ariba", downloadAllAribaDocs);
+router.post("/:emailId/reply", sendReplyToEmail);
+router.get("/:emailId/dispatch-draft", generateDispatchDraft);
 
 export const emailRoutes = router;
