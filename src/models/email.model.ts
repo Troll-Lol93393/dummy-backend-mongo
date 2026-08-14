@@ -20,6 +20,8 @@ export type AribaDownloadStatus = "LINK_EXTRACTED" | "DOWNLOADING" | "DOWNLOADED
 
 export type EmailSource = "ARIBA" | "DIRECT" | "UNKNOWN";
 
+export type DispatchDraftStatus = "NONE" | "DRAFT_CREATED" | "SENT";
+
 export interface IEmailAttachment {
     filename: string;
     contentType: string;
@@ -82,6 +84,14 @@ export interface IEmail {
     // PO/item the customer is asking about, extracted from body text and any
     // attached spreadsheet. Feeds the matching + draft-reply phase.
     dispatchRequests: IDispatchRequestItem[];
+    // Tracks the auto-created-Gmail-draft lifecycle: NONE (not created, or
+    // nothing dispatched yet to draft against) -> DRAFT_CREATED (IMAP-appended
+    // to \Drafts, messageId recorded so the scheduler can later detect it
+    // landing in \Sent) -> SENT (customer's reply went out from Gmail itself).
+    dispatchDraftStatus: DispatchDraftStatus;
+    dispatchDraftMessageId?: string;
+    dispatchDraftCreatedAt?: Date;
+    dispatchDraftSentAt?: Date;
     linkedRfq?: mongoose.Types.ObjectId;
     isRead: boolean;
     isProcessed: boolean;
@@ -202,6 +212,14 @@ const emailSchema = new Schema<IEmail>(
             }),
         },
         dispatchRequests: [dispatchRequestItemSchema],
+        dispatchDraftStatus: {
+            type: String,
+            enum: ["NONE", "DRAFT_CREATED", "SENT"],
+            default: "NONE",
+        },
+        dispatchDraftMessageId: { type: String },
+        dispatchDraftCreatedAt: { type: Date },
+        dispatchDraftSentAt: { type: Date },
         linkedRfq: { type: Schema.Types.ObjectId, ref: "RFQ", index: true },
         isRead: { type: Boolean, default: false, index: true },
         isProcessed: { type: Boolean, default: false, index: true },

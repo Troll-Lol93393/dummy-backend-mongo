@@ -3,6 +3,7 @@ import { syncEmails } from "../services/email/imapService";
 import { classifyUnprocessed } from "../services/email/classificationService";
 import { processAribaDownloads } from "../services/email/aribaScraperService";
 import { autoCreateRfqsFromDownloads } from "../services/email/autoRfqService";
+import { createDispatchDraftsInGmail, checkSentDispatchDrafts } from "../services/email/gmailDraftAutoService";
 import { getEmailSettings } from "../models/emailSettings.model";
 
 let scheduledTask: ReturnType<typeof cron.schedule> | null = null;
@@ -43,6 +44,19 @@ export function startEmailScheduler(): void {
             const autoCreated = await autoCreateRfqsFromDownloads();
             if (autoCreated > 0) {
                 console.log(`[CRON] Auto-created ${autoCreated} RFQ(s) from downloaded documents`);
+            }
+
+            // Step 5: Auto-create Gmail drafts for dispatched-only PO/item requests
+            // (no-op unless settings.autoGmailDraftEnabled is on)
+            const draftsCreated = await createDispatchDraftsInGmail();
+            if (draftsCreated > 0) {
+                console.log(`[CRON] Created ${draftsCreated} Gmail dispatch-status draft(s)`);
+            }
+
+            // Step 6: Detect drafts sent from Gmail itself, update UI status
+            const draftsMarkedSent = await checkSentDispatchDrafts();
+            if (draftsMarkedSent > 0) {
+                console.log(`[CRON] Marked ${draftsMarkedSent} dispatch draft(s) as sent`);
             }
         } catch (err) {
             console.error("[CRON] Email scheduler error:", err);

@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer";
+import type MimeNode from "nodemailer/lib/mime-node";
 import { getEmailSettings } from "../models/emailSettings.model";
 import { decryptPassword } from "./emailEncryption";
 
@@ -42,6 +43,38 @@ export interface SendMailOptions {
 export interface SendMailResult {
     messageId: string;
     raw: Buffer;
+}
+
+export interface BuiltMimeMessage {
+    raw: Buffer;
+    messageId: string;
+    envelope: MimeNode.Envelope;
+}
+
+/**
+ * Composes the raw RFC 2822 message without sending it. Shared by sendMail
+ * (which sends it) and the Gmail-draft path (which only IMAP-appends it to
+ * \Drafts) so both produce byte-identical MIME for the same inputs.
+ */
+export async function buildMimeMessage(options: SendMailOptions): Promise<BuiltMimeMessage> {
+    const creds = await getSmtpCredentials();
+    const from = creds.fromName ? `"${creds.fromName}" <${creds.user}>` : creds.user;
+
+    const node = new MailComposer({
+        from,
+        to: options.to,
+        cc: options.cc,
+        subject: options.subject,
+        html: options.html,
+        inReplyTo: options.inReplyTo,
+        references: options.references,
+    }).compile();
+
+    const raw = await node.build();
+    const messageId = node.messageId();
+    const envelope = node.getEnvelope();
+
+    return { raw, messageId, envelope };
 }
 
 /**
@@ -93,25 +126,8 @@ export async function sendMail(options: SendMailOptions): Promise<SendMailResult
         auth: { user: creds.user, pass: creds.password },
     });
 
-    const from = creds.fromName ? `"${creds.fromName}" <${creds.user}>` : creds.user;
-
-    // Build via MailComposer first so we have the exact raw MIME that was sent —
-    // callers use this to append the same message into the mailbox's Sent
-    // folder over IMAP, which nodemailer's SMTP transport doesn't do itself.
-    const node = new MailComposer({
-        from,
-        to: options.to,
-        cc: options.cc,
-        subject: options.subject,
-        html: options.html,
-        inReplyTo: options.inReplyTo,
-        references: options.references,
-    }).compile();
-
-    const raw = await node.build();
-    const messageId = node.messageId();
-
-    await transport.sendMail({ raw, envelope: node.getEnvelope() });
+    const { raw, messageId, envelope } = await buildMimeMessage(options);
+    await transport.sendMail({ raw, envelope });
 
     return { messageId, raw };
 }

@@ -458,6 +458,7 @@ export const getSettings = asyncHandler(async (_req: Request, res: Response) => 
         fromName: settings.fromName,
         replySignatureHtml: settings.replySignatureHtml,
         hasSmtpPassword: !!settings.smtpPassword,
+        autoGmailDraftEnabled: settings.autoGmailDraftEnabled,
     };
 
     res.status(200).json(new ApiResponse(200, safe, "Settings fetched"));
@@ -484,6 +485,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
         smtpSecure,
         fromName,
         replySignatureHtml,
+        autoGmailDraftEnabled,
     } = req.body;
 
     if (imapHost !== undefined) settings.imapHost = imapHost;
@@ -504,6 +506,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     if (smtpSecure !== undefined) settings.smtpSecure = smtpSecure;
     if (fromName !== undefined) settings.fromName = fromName;
     if (replySignatureHtml !== undefined) settings.replySignatureHtml = replySignatureHtml;
+    if (autoGmailDraftEnabled !== undefined) settings.autoGmailDraftEnabled = autoGmailDraftEnabled;
 
     await settings.save();
 
