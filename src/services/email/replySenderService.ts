@@ -56,7 +56,7 @@ export async function sendReply(options: SendReplyOptions): Promise<SendReplyRes
         references,
     });
 
-    await appendToSentFolder(raw).catch(err => {
+    await appendToMailbox(raw, "\\Sent", ["\\Seen"]).catch(err => {
         logger.warn("email:reply", "Failed to append sent reply to IMAP Sent folder", {
             error: (err as Error).message,
         });
@@ -65,18 +65,26 @@ export async function sendReply(options: SendReplyOptions): Promise<SendReplyRes
     return { messageId };
 }
 
-async function appendToSentFolder(raw: Buffer): Promise<void> {
+/**
+ * Best-effort IMAP APPEND into a special-use mailbox (\Sent, \Drafts, ...).
+ * Falls back to a name-prefix match if the server doesn't advertise
+ * SPECIAL-USE. Shared by the reply-send path (\Sent) and the Gmail
+ * auto-draft path (\Drafts) so both use the same mailbox-resolution logic.
+ */
+export async function appendToMailbox(raw: Buffer, specialUse: string, flags: string[] = []): Promise<void> {
     const settings = await getEmailSettings();
     if (!settings.imapUser || !settings.imapPassword) return;
 
+    const namePrefix = specialUse.replace(/^\\/, "");
     const client = createImapClient(settings);
     await client.connect();
     try {
         const mailboxes = await client.list();
-        const sentMailbox =
-            mailboxes.find(mb => mb.specialUse === "\\Sent") || mailboxes.find(mb => /^sent/i.test(mb.name));
-        if (sentMailbox) {
-            await client.append(sentMailbox.path, raw, ["\\Seen"]);
+        const targetMailbox =
+            mailboxes.find(mb => mb.specialUse === specialUse) ||
+            mailboxes.find(mb => new RegExp(`^${namePrefix}`, "i").test(mb.name));
+        if (targetMailbox) {
+            await client.append(targetMailbox.path, raw, flags);
         }
     } finally {
         await client.logout();

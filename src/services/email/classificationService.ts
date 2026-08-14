@@ -234,6 +234,12 @@ const DISPATCH_STATUS_REQUEST_KEYWORDS = [
     "kindly confirm dispatch",
     "dispatch details",
     "status of material",
+    "status of the material",
+    "update the status of",
+    "update on the status",
+    "kindly update the status",
+    "please update the status",
+    "update the status",
     "dispatch update",
 ];
 

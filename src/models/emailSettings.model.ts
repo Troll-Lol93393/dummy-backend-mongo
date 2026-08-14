@@ -25,6 +25,11 @@ export interface IEmailSettings {
     smtpSecure: boolean;
     fromName: string;
     replySignatureHtml: string;
+    // When on, DISPATCH_STATUS_REQUEST emails with at least one dispatched
+    // PO/item get a Gmail draft created automatically (IMAP APPEND to the
+    // \Drafts folder — never sent). When off, the scheduler skips this
+    // entirely: no matching, no IMAP connection, nothing runs.
+    autoGmailDraftEnabled: boolean;
 }
 
 /** Default domains to always allow */
@@ -61,6 +66,7 @@ const emailSettingsSchema = new Schema<IEmailSettings>(
         smtpSecure: { type: Boolean, default: false },
         fromName: { type: String, default: "" },
         replySignatureHtml: { type: String, default: "" },
+        autoGmailDraftEnabled: { type: Boolean, default: false },
     },
     { timestamps: true }
 );
