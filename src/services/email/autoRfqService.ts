@@ -1,4 +1,5 @@
 import { Email } from "../../models/email.model";
+import { getEmailSettings } from "../../models/emailSettings.model";
 import { RFQ } from "../../models/rfq.models";
 import { RFQItems } from "../../models/rfqItems.model";
 import { Item } from "../../models/item.model";
@@ -58,6 +59,9 @@ function downloadFileFromUrl(url: string, destPath: string): Promise<void> {
  * Skips if an RFQ with the same PR number already exists.
  */
 export async function autoCreateRfqsFromDownloads(): Promise<number> {
+    const settings = await getEmailSettings();
+    if (!settings.autoCreateRfqEnabled) return 0;
+
     // Find emails with downloaded Ariba docs ONLY — no linked RFQ, and relevant category
     // We intentionally skip emails that only have attachments (no Ariba doc),
     // because attachment data is unreliable. RFQs must be created from Ariba documents.

@@ -1,4 +1,5 @@
 import axios from "axios";
+import mongoose from "mongoose";
 import { Email, IEmail, EMAIL_CATEGORIES, EmailCategory } from "../../models/email.model";
 import { RFQ } from "../../models/rfq.models";
 import { PORegister } from "../../models/poRegister.model";
@@ -119,7 +120,7 @@ ${email.aribaLinks.length > 0 ? `ARIBA LINKS: ${email.aribaLinks.length} link(s)
                     timeout: 30000,
                 }
             ),
-        { maxRetries: 0, initialDelayMs: 2000 }
+        { maxRetries: 2, initialDelayMs: 3000, maxDelayMs: 20000 }
     );
 
     const text = response.data?.choices?.[0]?.message?.content || "";
@@ -141,6 +142,108 @@ ${email.aribaLinks.length > 0 ? `ARIBA LINKS: ${email.aribaLinks.length} link(s)
     result.confidence = Math.max(0, Math.min(100, result.confidence || 0));
 
     return result;
+}
+
+interface BatchClassificationResult {
+    results: ClassificationResult[];
+}
+
+function defaultClassificationResult(): ClassificationResult {
+    return {
+        category: "GENERAL",
+        confidence: 0,
+        extractedData: { prNumbers: [], poNumbers: [], companyNames: [], actionItems: [], summary: "" },
+    };
+}
+
+/** Defensively normalizes one entry from a batch AI response — never lets a
+ * malformed/missing entry desync results from the emails they belong to. */
+function normalizeClassificationResult(raw: Partial<ClassificationResult> | undefined): ClassificationResult {
+    if (!raw) return defaultClassificationResult();
+    const category = raw.category && EMAIL_CATEGORIES.includes(raw.category) ? raw.category : "GENERAL";
+    return {
+        category,
+        confidence: Math.max(0, Math.min(100, raw.confidence || 0)),
+        extractedData: {
+            prNumbers: raw.extractedData?.prNumbers || [],
+            poNumbers: raw.extractedData?.poNumbers || [],
+            companyNames: raw.extractedData?.companyNames || [],
+            contactPerson: raw.extractedData?.contactPerson,
+            contactEmail: raw.extractedData?.contactEmail,
+            contactPhone: raw.extractedData?.contactPhone,
+            location: raw.extractedData?.location,
+            eventStartDate: raw.extractedData?.eventStartDate,
+            dueDate: raw.extractedData?.dueDate,
+            actionItems: raw.extractedData?.actionItems || [],
+            summary: raw.extractedData?.summary || "",
+        },
+    };
+}
+
+function buildEmailPromptBlock(email: IEmail, index: number): string {
+    return `--- EMAIL ${index} ---
+FROM: ${email.from.name} <${email.from.address}>
+SUBJECT: ${email.subject}
+DATE: ${email.date}
+
+BODY:
+${email.textBody?.substring(0, 2000) || "(no text body)"}
+
+${email.attachments.length > 0 ? `ATTACHMENTS: ${email.attachments.map(a => a.filename).join(", ")}` : ""}
+${email.aribaLinks.length > 0 ? `ARIBA LINKS: ${email.aribaLinks.length} link(s) found` : ""}`;
+}
+
+/**
+ * Classifies up to N emails in a single Groq call instead of one call per
+ * email. On a rate-limited free tier, request COUNT is the scarce resource
+ * (not tokens) — batching directly cuts calls against the cap instead of
+ * just spacing them out.
+ */
+async function classifyBatchWithAI(emails: IEmail[]): Promise<ClassificationResult[]> {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+        throw new Error("GROQ_API_KEY is not set in environment variables");
+    }
+
+    const prompt = `Classify each of the following ${emails.length} procurement emails independently. Respond with a JSON object containing a "results" array with exactly ${emails.length} entries, in the SAME ORDER as the emails below (results[0] for EMAIL 1, results[1] for EMAIL 2, etc). Each entry follows the category/extractedData structure described in the system prompt.
+
+${emails.map((e, i) => buildEmailPromptBlock(e, i + 1)).join("\n\n")}`;
+
+    const response = await retryWithBackoff(
+        () =>
+            axios.post(
+                GROQ_API_URL,
+                {
+                    model: GROQ_MODEL,
+                    messages: [
+                        { role: "system", content: CLASSIFICATION_SYSTEM_PROMPT },
+                        { role: "user", content: prompt },
+                    ],
+                    temperature: 0.1,
+                    max_tokens: Math.min(1024 * emails.length, 4096),
+                    response_format: { type: "json_object" },
+                },
+                {
+                    headers: {
+                        Authorization: `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                    },
+                    timeout: 45000,
+                }
+            ),
+        { maxRetries: 2, initialDelayMs: 3000, maxDelayMs: 20000 }
+    );
+
+    const text = response.data?.choices?.[0]?.message?.content || "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        throw new Error("AI batch response did not contain valid JSON");
+    }
+
+    const parsed: Partial<BatchClassificationResult> = JSON.parse(jsonMatch[0]);
+    const rawResults = Array.isArray(parsed.results) ? parsed.results : [];
+
+    return emails.map((_, i) => normalizeClassificationResult(rawResults[i]));
 }
 
 /**
@@ -396,8 +499,76 @@ async function findLinkedRfq(prNumbers: string[]): Promise<string | null> {
     return null;
 }
 
+function toPreClassifiedResult(preResult: { category: EmailCategory; poNumbers: string[]; prNumbers: string[] }): ClassificationResult {
+    return {
+        category: preResult.category,
+        confidence: 90,
+        extractedData: {
+            prNumbers: preResult.prNumbers,
+            poNumbers: preResult.poNumbers,
+            companyNames: [],
+            actionItems: [],
+            summary: "",
+        },
+    };
+}
+
+type EmailDocument = mongoose.Document<unknown, object, IEmail> & IEmail;
+
 /**
- * Classify a single email and update the document.
+ * Applies a classification result to an email document: merges regex PR/PO
+ * numbers, sets classification, auto-links RFQ, extracts dispatch requests
+ * for DISPATCH_STATUS_REQUEST emails, and saves. Shared by the single-email
+ * path (classifyEmail) and the batched cron path (classifyUnprocessed) so
+ * both apply identical post-processing regardless of how the raw result
+ * (keyword rule, single AI call, or batched AI call) was produced.
+ */
+async function applyClassificationResult(email: EmailDocument, result: ClassificationResult): Promise<void> {
+    const combinedText = `${email.subject} ${email.textBody}`;
+
+    const regexPrNumbers = extractPrNumbersFromText(combinedText);
+    const allPrNumbers = [...new Set([...result.extractedData.prNumbers, ...regexPrNumbers])];
+
+    const regexPoNumbers = extractPoNumbersFromText(combinedText);
+    const allPoNumbers = [...new Set([...(result.extractedData.poNumbers || []), ...regexPoNumbers])];
+
+    email.classification = {
+        category: result.category,
+        confidence: result.confidence,
+        extractedData: {
+            prNumbers: allPrNumbers,
+            poNumbers: allPoNumbers,
+            companyNames: result.extractedData.companyNames || [],
+            contactPerson: result.extractedData.contactPerson,
+            contactEmail: result.extractedData.contactEmail,
+            contactPhone: result.extractedData.contactPhone,
+            location: result.extractedData.location,
+            eventStartDate: result.extractedData.eventStartDate
+                ? new Date(result.extractedData.eventStartDate)
+                : undefined,
+            dueDate: result.extractedData.dueDate ? new Date(result.extractedData.dueDate) : undefined,
+            actionItems: result.extractedData.actionItems || [],
+            summary: result.extractedData.summary || "",
+        },
+    };
+
+    const linkedRfqId = await findLinkedRfq(allPrNumbers);
+    if (linkedRfqId) email.linkedRfq = linkedRfqId as unknown as typeof email.linkedRfq;
+
+    if (result.category === "DISPATCH_STATUS_REQUEST") {
+        email.dispatchRequests = await extractDispatchRequests(email);
+    }
+
+    email.isProcessed = true;
+    await email.save();
+
+    logger.info("CLASSIFY", `Classified email "${email.subject}" as ${result.category} (${result.confidence}%)`);
+}
+
+/**
+ * Classify a single email and update the document. Used by the manual
+ * "Reclassify" action — always a single AI call when keyword rules miss,
+ * since there's nothing to batch with.
  */
 export async function classifyEmail(emailId: string): Promise<void> {
     const email = await Email.findById(emailId);
@@ -407,84 +578,9 @@ export async function classifyEmail(emailId: string): Promise<void> {
     }
 
     try {
-        const combinedText = `${email.subject} ${email.textBody}`;
-
-        // Step 1: Subject-based pre-classification (fast, no AI needed)
         const preResult = await preClassifyBySubject(email.subject, email.textBody);
-
-        // Step 2: AI classification — skip if subject rules already gave a confident match
-        let result: ClassificationResult;
-        if (preResult) {
-            // Subject rule matched — no need to call Groq, saves quota for extraction
-            result = {
-                category: preResult.category,
-                confidence: 90,
-                extractedData: {
-                    prNumbers: preResult.prNumbers,
-                    poNumbers: preResult.poNumbers,
-                    companyNames: [],
-                    contactPerson: undefined,
-                    contactEmail: undefined,
-                    contactPhone: undefined,
-                    location: undefined,
-                    eventStartDate: null,
-                    dueDate: null,
-                    actionItems: [],
-                    summary: "",
-                },
-            };
-        } else {
-            result = await classifyWithAI(email);
-        }
-
-        // Step 3: Merge regex-extracted PR & PO numbers with classified ones
-        const regexPrNumbers = extractPrNumbersFromText(combinedText);
-        const allPrNumbers = [
-            ...new Set([...result.extractedData.prNumbers, ...regexPrNumbers]),
-        ];
-        result.extractedData.prNumbers = allPrNumbers;
-
-        const regexPoNumbers = extractPoNumbersFromText(combinedText);
-        const allPoNumbers = [
-            ...new Set([...(result.extractedData.poNumbers || []), ...regexPoNumbers]),
-        ];
-        result.extractedData.poNumbers = allPoNumbers;
-
-        // Update classification
-        email.classification = {
-            category: result.category,
-            confidence: result.confidence,
-            extractedData: {
-                prNumbers: allPrNumbers,
-                poNumbers: allPoNumbers,
-                companyNames: result.extractedData.companyNames || [],
-                contactPerson: result.extractedData.contactPerson,
-                contactEmail: result.extractedData.contactEmail,
-                contactPhone: result.extractedData.contactPhone,
-                location: result.extractedData.location,
-                eventStartDate: result.extractedData.eventStartDate
-                    ? new Date(result.extractedData.eventStartDate)
-                    : undefined,
-                dueDate: result.extractedData.dueDate
-                    ? new Date(result.extractedData.dueDate)
-                    : undefined,
-                actionItems: result.extractedData.actionItems || [],
-                summary: result.extractedData.summary || "",
-            },
-        };
-
-        // Auto-link to existing records
-        const linkedRfqId = await findLinkedRfq(allPrNumbers);
-        if (linkedRfqId) email.linkedRfq = linkedRfqId as unknown as typeof email.linkedRfq;
-
-        if (result.category === "DISPATCH_STATUS_REQUEST") {
-            email.dispatchRequests = await extractDispatchRequests(email);
-        }
-
-        email.isProcessed = true;
-        await email.save();
-
-        logger.info("CLASSIFY", `Classified email "${email.subject}" as ${result.category} (${result.confidence}%)`);
+        const result = preResult ? toPreClassifiedResult(preResult) : await classifyWithAI(email);
+        await applyClassificationResult(email, result);
     } catch (err) {
         logger.error("CLASSIFY", `Failed to classify email ${emailId}`, {
             error: String(err),
@@ -492,8 +588,15 @@ export async function classifyEmail(emailId: string): Promise<void> {
     }
 }
 
+const AI_BATCH_SIZE = 5;
+const AI_BATCH_DELAY_MS = 3000;
+
 /**
- * Classify all unprocessed emails in batches.
+ * Classify all unprocessed emails. Two passes: first every email that a free
+ * keyword rule can resolve (no AI, no delay needed); then whatever's left
+ * goes through Groq in batches of AI_BATCH_SIZE — one call classifies several
+ * emails at once, which cuts request COUNT against a rate-limited free tier
+ * far more effectively than just spacing individual calls further apart.
  */
 export async function classifyUnprocessed(): Promise<number> {
     // Fresh start: only process emails received from Sunday April 5, 2026 onwards
@@ -505,17 +608,41 @@ export async function classifyUnprocessed(): Promise<number> {
         date: { $gte: PIPELINE_START_DATE },
     })
         .sort({ date: -1 })
-        .limit(20)
-        .select("_id");
+        .limit(20);
 
     let classified = 0;
+    const needsAI: EmailDocument[] = [];
 
     for (const email of unprocessed) {
-        await classifyEmail(String(email._id));
-        classified++;
-        // Rate limiting — 1s delay between classifications
-        if (classified < unprocessed.length) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+        try {
+            const preResult = await preClassifyBySubject(email.subject, email.textBody);
+            if (preResult) {
+                await applyClassificationResult(email, toPreClassifiedResult(preResult));
+                classified++;
+            } else {
+                needsAI.push(email);
+            }
+        } catch (err) {
+            logger.error("CLASSIFY", `Failed to pre-classify email ${email._id}`, { error: String(err) });
+        }
+    }
+
+    for (let i = 0; i < needsAI.length; i += AI_BATCH_SIZE) {
+        const chunk = needsAI.slice(i, i + AI_BATCH_SIZE);
+        try {
+            const results = await classifyBatchWithAI(chunk);
+            for (let j = 0; j < chunk.length; j++) {
+                await applyClassificationResult(chunk[j]!, results[j]!);
+                classified++;
+            }
+        } catch (err) {
+            logger.error("CLASSIFY", `Failed to batch-classify ${chunk.length} email(s)`, {
+                error: String(err),
+            });
+        }
+
+        if (i + AI_BATCH_SIZE < needsAI.length) {
+            await new Promise(resolve => setTimeout(resolve, AI_BATCH_DELAY_MS));
         }
     }
 

@@ -30,6 +30,11 @@ export interface IEmailSettings {
     // \Drafts folder — never sent). When off, the scheduler skips this
     // entirely: no matching, no IMAP connection, nothing runs.
     autoGmailDraftEnabled: boolean;
+    // When off (default), the scheduler never auto-downloads-and-extracts an
+    // RFQ from Ariba documents — that work is currently deprioritized in
+    // favor of the email/dispatch-status pipeline. Manual RFQ creation via
+    // the UI is unaffected either way.
+    autoCreateRfqEnabled: boolean;
 }
 
 /** Default domains to always allow */
@@ -67,6 +72,7 @@ const emailSettingsSchema = new Schema<IEmailSettings>(
         fromName: { type: String, default: "" },
         replySignatureHtml: { type: String, default: "" },
         autoGmailDraftEnabled: { type: Boolean, default: false },
+        autoCreateRfqEnabled: { type: Boolean, default: false },
     },
     { timestamps: true }
 );
