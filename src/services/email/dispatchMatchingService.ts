@@ -59,7 +59,7 @@ export async function matchDispatchRequests(
             ? Sales.find({ poNumber: { $in: poNumbers }, isDeleted: false }).lean()
             : Promise.resolve([]),
         poNumbers.length
-            ? PORegister.find({ poNumber: { $in: poNumbers }, isDeleted: false }).lean()
+            ? PORegister.find({ corePoNumber: { $in: poNumbers }, isDeleted: false }).lean()
             : Promise.resolve([]),
     ]);
 
@@ -70,7 +70,7 @@ export async function matchDispatchRequests(
         group.push(sale);
         salesByPo.set(sale.poNumber, group);
     }
-    const poRegisterByPo = new Map(poRegisters.map(p => [p.poNumber, p]));
+    const poRegisterByPo = new Map(poRegisters.map(p => [p.corePoNumber, p]));
 
     return requests.map(request => {
         const salesForPo = salesByPo.get(request.poNumber) || [];

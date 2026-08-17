@@ -51,8 +51,8 @@ export const importSales = asyncHandler(async (req: Request, res: Response, _nex
 
         const [poRegisters, items] = await Promise.all([
             uniquePoNumbers.length
-                ? PORegister.find({ poNumber: { $in: uniquePoNumbers }, isDeleted: false })
-                      .select("_id poNumber")
+                ? PORegister.find({ corePoNumber: { $in: uniquePoNumbers }, isDeleted: false })
+                      .select("_id corePoNumber")
                       .lean()
                 : Promise.resolve([]),
             uniqueItemCodes.length
@@ -62,7 +62,7 @@ export const importSales = asyncHandler(async (req: Request, res: Response, _nex
                 : Promise.resolve([]),
         ]);
 
-        const poRegisterMap = new Map(poRegisters.map((p: { poNumber: string; _id: mongoose.Types.ObjectId }) => [p.poNumber, p._id]));
+        const poRegisterMap = new Map(poRegisters.map((p: { corePoNumber: string; _id: mongoose.Types.ObjectId }) => [p.corePoNumber, p._id]));
         const itemMap = new Map(items.map((i: { itemCode: string; _id: mongoose.Types.ObjectId }) => [i.itemCode, i._id]));
 
         const unmatchedPoNumbers = uniquePoNumbers.filter(po => !poRegisterMap.has(po));
@@ -544,7 +544,7 @@ export const getPoFulfillment = asyncHandler(
         }
 
         const poRegisters = await PORegister.find({
-            poNumber: { $in: [...poNumbers] },
+            corePoNumber: { $in: [...poNumbers] },
             isDeleted: false,
         }).lean();
 
@@ -552,7 +552,7 @@ export const getPoFulfillment = asyncHandler(
 
         const pos = poRegisters.map(po => {
             const items = po.items.map(item => {
-                const dispatchedQty = dispatchedMap.get(`${po.poNumber}::${item.itemCode}`) ?? 0;
+                const dispatchedQty = dispatchedMap.get(`${po.corePoNumber}::${item.itemCode}`) ?? 0;
                 const orderedQty = item.quantity;
                 const pendingQty = Math.max(0, orderedQty - dispatchedQty);
                 const fulfillmentPct = orderedQty > 0 ? Math.min(100, (dispatchedQty / orderedQty) * 100) : 0;
@@ -713,6 +713,7 @@ export const getInvoiceDetail = asyncHandler(async (req: Request, res: Response,
 type PoRegisterLineItem = { itemCode: string; itemDescription: string; quantity: number };
 type PoRegisterLean = {
     poNumber: string;
+    corePoNumber: string;
     jobNumber: string;
     companyName: string;
     poDate: Date;
@@ -763,8 +764,8 @@ export const getPoDispatchList = asyncHandler(async (req: Request, res: Response
     }
 
     const poNumbers = poSummaries.map(p => p._id as string);
-    const poRegisters = (await PORegister.find({ poNumber: { $in: poNumbers }, isDeleted: false }).lean()) as unknown as PoRegisterLean[];
-    const poRegisterMap = new Map(poRegisters.map(po => [po.poNumber, po]));
+    const poRegisters = (await PORegister.find({ corePoNumber: { $in: poNumbers }, isDeleted: false }).lean()) as unknown as PoRegisterLean[];
+    const poRegisterMap = new Map(poRegisters.map(po => [po.corePoNumber, po]));
 
     let list = poSummaries.map(p => {
         const poNumber = p._id as string;
@@ -831,7 +832,7 @@ export const getPoDispatchDetail = asyncHandler(async (req: Request, res: Respon
     if (financialYear) salesFilter.financialYear = financialYear;
 
     const [register, salesRows] = await Promise.all([
-        PORegister.findOne({ poNumber, isDeleted: false }).lean() as unknown as Promise<PoRegisterLean | null>,
+        PORegister.findOne({ corePoNumber: poNumber, isDeleted: false }).lean() as unknown as Promise<PoRegisterLean | null>,
         Sales.find(salesFilter).sort({ dispatchDate: 1 }).lean(),
     ]);
 

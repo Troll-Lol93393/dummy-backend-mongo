@@ -7,6 +7,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/apiResponse";
 import { PORegister } from "../models/poRegister.model";
 import { Client } from "../models/client.model";
+import { extractCorePoNumber } from "../utils/poNumber";
 
 interface ParsedLineItem {
     serialNumber: number;
@@ -279,6 +280,7 @@ export const importPORegisters = asyncHandler(
                         update: {
                             $set: {
                                 ...po,
+                                corePoNumber: extractCorePoNumber(po.poNumber),
                                 client: clientId ?? undefined,
                                 isDeleted: false,
                             },
