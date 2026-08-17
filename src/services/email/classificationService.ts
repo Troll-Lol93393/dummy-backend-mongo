@@ -339,7 +339,7 @@ async function preClassifyBySubject(
 
         // Check DB for existing PO
         const existingPo = await PORegister.findOne({
-            poNumber: { $in: allPoNumbers },
+            corePoNumber: { $in: allPoNumbers },
             isDeleted: false,
         })
             .select("_id")
@@ -361,7 +361,7 @@ async function preClassifyBySubject(
         const poNumbers = extractPoNumbersFromText(combined);
         if (poNumbers.length > 0) {
             const existingPo = await PORegister.findOne({
-                poNumber: { $in: poNumbers },
+                corePoNumber: { $in: poNumbers },
                 isDeleted: false,
             })
                 .select("_id")
