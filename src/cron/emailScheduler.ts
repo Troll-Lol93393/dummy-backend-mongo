@@ -4,6 +4,11 @@ import { classifyUnprocessed } from "../services/email/classificationService";
 import { processAribaDownloads } from "../services/email/aribaScraperService";
 import { autoCreateRfqsFromDownloads } from "../services/email/autoRfqService";
 import { createDispatchDraftsInGmail, checkSentDispatchDrafts } from "../services/email/gmailDraftAutoService";
+import { processPaymentAdvices } from "../services/email/paymentAdviceProcessingService";
+import {
+    createShortPaymentFollowUpDrafts,
+    createOverdueFollowUpDrafts,
+} from "../services/email/paymentFollowUpAutoService";
 import { getEmailSettings } from "../models/emailSettings.model";
 
 let scheduledTask: ReturnType<typeof cron.schedule> | null = null;
@@ -57,6 +62,27 @@ export function startEmailScheduler(): void {
             const draftsMarkedSent = await checkSentDispatchDrafts();
             if (draftsMarkedSent > 0) {
                 console.log(`[CRON] Marked ${draftsMarkedSent} dispatch draft(s) as sent`);
+            }
+
+            // Step 7: Ingest + reconcile SBI CMP ePayment Advice emails
+            // (always runs — no toggle, this is just data logging)
+            const paymentAdvicesProcessed = await processPaymentAdvices();
+            if (paymentAdvicesProcessed > 0) {
+                console.log(`[CRON] Reconciled ${paymentAdvicesProcessed} payment advice email(s)`);
+            }
+
+            // Step 8: Auto-create short-payment query drafts for JSW's vendor
+            // help desk (no-op unless settings.autoPaymentFollowUpEnabled is on)
+            const shortPaymentDrafts = await createShortPaymentFollowUpDrafts();
+            if (shortPaymentDrafts > 0) {
+                console.log(`[CRON] Created ${shortPaymentDrafts} short-payment follow-up draft(s)`);
+            }
+
+            // Step 9: Auto-create 45-day-overdue payment-not-received drafts
+            // (same toggle; weekly re-draft cadence per invoice)
+            const overdueDrafts = await createOverdueFollowUpDrafts();
+            if (overdueDrafts > 0) {
+                console.log(`[CRON] Created ${overdueDrafts} overdue-payment follow-up draft(s)`);
             }
         } catch (err) {
             console.error("[CRON] Email scheduler error:", err);

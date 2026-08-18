@@ -460,6 +460,7 @@ export const getSettings = asyncHandler(async (_req: Request, res: Response) => 
         hasSmtpPassword: !!settings.smtpPassword,
         autoGmailDraftEnabled: settings.autoGmailDraftEnabled,
         autoCreateRfqEnabled: settings.autoCreateRfqEnabled,
+        autoPaymentFollowUpEnabled: settings.autoPaymentFollowUpEnabled,
     };
 
     res.status(200).json(new ApiResponse(200, safe, "Settings fetched"));
@@ -488,6 +489,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
         replySignatureHtml,
         autoGmailDraftEnabled,
         autoCreateRfqEnabled,
+        autoPaymentFollowUpEnabled,
     } = req.body;
 
     if (imapHost !== undefined) settings.imapHost = imapHost;
@@ -510,6 +512,7 @@ export const updateSettings = asyncHandler(async (req: Request, res: Response) =
     if (replySignatureHtml !== undefined) settings.replySignatureHtml = replySignatureHtml;
     if (autoGmailDraftEnabled !== undefined) settings.autoGmailDraftEnabled = autoGmailDraftEnabled;
     if (autoCreateRfqEnabled !== undefined) settings.autoCreateRfqEnabled = autoCreateRfqEnabled;
+    if (autoPaymentFollowUpEnabled !== undefined) settings.autoPaymentFollowUpEnabled = autoPaymentFollowUpEnabled;
 
     await settings.save();
 

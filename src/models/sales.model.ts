@@ -15,6 +15,10 @@ export interface ISales {
     // system for historical invoices, but a required field going forward —
     // do not remove or repurpose this even though it's empty today.
     consignmentNumber?: string;
+    // JSW's 17-digit VSC barcode number for this invoice/dispatch. Manually
+    // entered — not yet populated for historical records, may be empty.
+    // Used by the payment-reconciliation follow-up drafts (Template 3).
+    barcode?: string;
     transporterId?: number;
     transporterName?: string;
     transporterGstin?: string;
@@ -86,6 +90,11 @@ const salesSchema: Schema<ISales> = new Schema(
         consignmentNumber: {
             type: String,
             trim: true,
+        },
+        barcode: {
+            type: String,
+            trim: true,
+            index: true,
         },
         transporterId: {
             type: Number,

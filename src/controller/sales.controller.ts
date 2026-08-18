@@ -185,13 +185,13 @@ export const getSalesById = asyncHandler(async (req: Request, res: Response, _ne
     res.status(200).json(new ApiResponse(200, sale, "Sales record fetched successfully"));
 });
 
-const EDITABLE_TRANSPORT_FIELDS = ["transporterName", "transporterGstin", "consignmentNumber", "ewayBillNumber"] as const;
+const EDITABLE_TRANSPORT_FIELDS = ["transporterName", "transporterGstin", "consignmentNumber", "ewayBillNumber", "barcode"] as const;
 
 /**
  * Sales line items are otherwise read-only (they reflect what the invoice said),
- * but transporter/consignment/e-way-bill info is frequently missing from the
- * source import and needs to be backfillable by hand — this is the only
- * update path, deliberately scoped to those four fields.
+ * but transporter/consignment/e-way-bill/barcode info is frequently missing from
+ * the source import and needs to be backfillable by hand — this is the only
+ * update path, deliberately scoped to those five fields.
  */
 export const updateSalesTransportDetails = asyncHandler(
     async (req: Request, res: Response, _next: NextFunction) => {
