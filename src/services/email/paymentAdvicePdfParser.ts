@@ -175,22 +175,39 @@ function parseInvoiceRows(rawText: string): { rows: ParsedPaymentAdviceRow[]; wa
         });
     }
 
-    // Defensive duplicate check — flattened multi-column tables can
-    // occasionally repeat a row verbatim. Never trust it silently.
-    const occurrences = new Map<string, number>();
+    // Dedupe rows that are the same underlying line rendered twice by the
+    // source PDF (observed in real advices: one occurrence shows the total
+    // with TDS=0, another shows the same invoice with TDS split out — the
+    // raw totals differ, but Total-minus-TDS lands on the identical expected
+    // net amount both times). Comparing raw invoiceTotalAmount alone misses
+    // this, so the real signal is "same invoice number + same expected net
+    // amount within a rupee" — genuinely separate charges against the same
+    // invoice number would compute to different expected net amounts and are
+    // deliberately left untouched.
+    const EXPECTED_NET_DEDUPE_TOLERANCE = 1;
+    const keptExpectedNetsByInvoice = new Map<string, number[]>();
+    const dedupedRows: ParsedPaymentAdviceRow[] = [];
+
     for (const row of rows) {
-        const key = `${row.invoiceNumber}|${row.invoiceTotalAmount}`;
-        occurrences.set(key, (occurrences.get(key) || 0) + 1);
-    }
-    for (const [key, count] of occurrences) {
-        if (count > 1) {
+        const expectedNet = row.invoiceTotalAmount - row.tdsAmount;
+        const priorNets = keptExpectedNetsByInvoice.get(row.invoiceNumber) || [];
+        const isDuplicate = priorNets.some(
+            net => Math.abs(net - expectedNet) <= EXPECTED_NET_DEDUPE_TOLERANCE
+        );
+
+        if (isDuplicate) {
             warnings.push(
-                `Suspicious duplicate row detected (invoice+amount "${key}" appears ${count} times) — verify manually`
+                `Invoice row ${row.invoiceNumber} appears more than once with the same expected net amount ` +
+                    `(Rs.${expectedNet.toFixed(2)}) — treated as the same line rendered twice by the source PDF, duplicate dropped`
             );
+            continue;
         }
+
+        dedupedRows.push(row);
+        keptExpectedNetsByInvoice.set(row.invoiceNumber, [...priorNets, expectedNet]);
     }
 
-    return { rows, warnings };
+    return { rows: dedupedRows, warnings };
 }
 
 /**
