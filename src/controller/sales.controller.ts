@@ -710,6 +710,215 @@ export const getInvoiceDetail = asyncHandler(async (req: Request, res: Response,
     res.status(200).json(new ApiResponse(200, { header, items }, "Invoice detail fetched successfully"));
 });
 
+/**
+ * Invoice-level barcode status list: one row per distinct invoiceNumber,
+ * with the invoice's barcode value (barcode is one-per-invoice, not
+ * per-line-item — see setInvoiceBarcode below). Supports search and a
+ * "missing only" filter for the barcode backfill workflow.
+ */
+export const getBarcodeStatus = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
+    const page = parseInt(req.query.page as string) || 1;
+    const size = parseInt(req.query.size as string) || 20;
+    const search = (req.query.search as string) || "";
+    const missingOnly = req.query.missingOnly === "true";
+
+    const match: Record<string, unknown> = { isDeleted: false };
+    if (search) {
+        match.$or = [
+            { invoiceNumber: { $regex: search, $options: "i" } },
+            { companyName: { $regex: search, $options: "i" } },
+        ];
+    }
+
+    const pipeline: mongoose.PipelineStage[] = [
+        { $match: match },
+        {
+            $group: {
+                _id: "$invoiceNumber",
+                companyName: { $first: "$companyName" },
+                dispatchDate: { $first: "$dispatchDate" },
+                invoiceDate: { $first: "$invoiceDate" },
+                barcode: { $first: "$barcode" },
+            },
+        },
+        {
+            $project: {
+                _id: 0,
+                invoiceNumber: "$_id",
+                companyName: 1,
+                dispatchDate: 1,
+                invoiceDate: 1,
+                barcode: 1,
+            },
+        },
+    ];
+
+    if (missingOnly) {
+        pipeline.push({
+            $match: {
+                $or: [{ barcode: { $exists: false } }, { barcode: null }, { barcode: "" }],
+            },
+        });
+    }
+
+    pipeline.push(
+        { $sort: { dispatchDate: -1 } },
+        {
+            $facet: {
+                data: [{ $skip: (page - 1) * size }, { $limit: size }],
+                totalCount: [{ $count: "count" }],
+            },
+        }
+    );
+
+    const results = await Sales.aggregate(pipeline);
+    const data = results[0]?.data ?? [];
+    const total = results[0]?.totalCount?.[0]?.count ?? 0;
+    const totalPages = Math.ceil(total / size);
+
+    res.status(200).json(
+        new ApiResponse(200, { data, total, totalPages, page, size }, "Barcode status fetched successfully")
+    );
+});
+
+/**
+ * Sets the same barcode across every Sales line-item document sharing the
+ * given invoice number — barcode is an invoice-level concept (JSW's VSC
+ * barcode format wants one per invoice), whereas the existing
+ * updateSalesTransportDetails endpoint edits a single line-item document
+ * by _id. This is the invoice-level counterpart.
+ */
+export const setInvoiceBarcode = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
+    const { invoiceNumber } = req.params;
+    const barcodeRaw = req.body.barcode;
+
+    if (typeof barcodeRaw !== "string" || barcodeRaw.trim().length === 0) {
+        throw new ApiError(400, "Barcode is required and must be a non-empty string");
+    }
+    const barcode = barcodeRaw.trim();
+
+    const result = await Sales.updateMany({ invoiceNumber, isDeleted: false }, { $set: { barcode } });
+
+    if (result.matchedCount === 0) {
+        throw new ApiError(404, "No sales records found for this invoice number");
+    }
+
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            { invoiceNumber, barcode, matched: result.matchedCount, modified: result.modifiedCount },
+            "Invoice barcode updated successfully"
+        )
+    );
+});
+
+const BARCODE_TEMPLATE_HEADERS = ["Invoice Number", "Barcode"];
+const BARCODE_TEMPLATE_EXAMPLE_ROW = ["SE/2526/000066", "12345678901234567"];
+
+export const downloadBarcodeImportTemplate = asyncHandler(
+    async (_req: Request, res: Response, _next: NextFunction) => {
+        const csv = [toCsvLine(BARCODE_TEMPLATE_HEADERS), toCsvLine(BARCODE_TEMPLATE_EXAMPLE_ROW)].join("\n");
+
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", 'attachment; filename="barcode-import-template.csv"');
+        res.status(200).send(csv);
+    }
+);
+
+/**
+ * Bulk barcode import: one barcode per invoice number (last row wins if an
+ * invoice number appears more than once in the file), applied to every
+ * Sales line-item document sharing that invoice number via updateMany.
+ */
+export const importBarcodes = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
+    if (!req.file) {
+        throw new ApiError(400, "No file uploaded");
+    }
+
+    const filePath = req.file.path;
+
+    try {
+        const raw = fs.readFileSync(filePath, "utf-8").replace(/^﻿/, "");
+        const rows: Record<string, string>[] = parse(raw, {
+            columns: true,
+            skip_empty_lines: true,
+            relax_column_count: true,
+            trim: true,
+        });
+
+        const rowErrors: string[] = [];
+        const invoiceBarcodeMap = new Map<string, string>();
+
+        rows.forEach((row, idx) => {
+            const rowNumber = idx + 2;
+            const invoiceNumber = row["Invoice Number"]?.trim();
+            const barcode = row["Barcode"]?.trim();
+
+            if (!invoiceNumber || !barcode) {
+                rowErrors.push(`Row ${rowNumber}: Invoice Number and Barcode are required`);
+                return;
+            }
+
+            invoiceBarcodeMap.set(invoiceNumber, barcode);
+        });
+
+        const uniqueInvoiceNumbers = [...invoiceBarcodeMap.keys()];
+        const existing = uniqueInvoiceNumbers.length
+            ? await Sales.find({ invoiceNumber: { $in: uniqueInvoiceNumbers }, isDeleted: false })
+                  .select("invoiceNumber")
+                  .lean()
+            : [];
+        const existingInvoiceNumbers = new Set(existing.map(e => e.invoiceNumber));
+
+        const notFoundInvoiceNumbers: string[] = [];
+        const bulkOps: mongoose.AnyBulkWriteOperation[] = [];
+
+        for (const invoiceNumber of uniqueInvoiceNumbers) {
+            if (!existingInvoiceNumbers.has(invoiceNumber)) {
+                notFoundInvoiceNumbers.push(invoiceNumber);
+                rowErrors.push(`Invoice ${invoiceNumber}: no sales record found, skipped`);
+                continue;
+            }
+            bulkOps.push({
+                updateMany: {
+                    filter: { invoiceNumber, isDeleted: false },
+                    update: { $set: { barcode: invoiceBarcodeMap.get(invoiceNumber) } },
+                },
+            });
+        }
+
+        let matchedCount = 0;
+        let modifiedCount = 0;
+        for (let i = 0; i < bulkOps.length; i += BULK_CHUNK_SIZE) {
+            const chunk = bulkOps.slice(i, i + BULK_CHUNK_SIZE);
+            if (chunk.length === 0) continue;
+            const result = await Sales.bulkWrite(chunk);
+            matchedCount += result.matchedCount;
+            modifiedCount += result.modifiedCount;
+        }
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                {
+                    totalRows: rows.length,
+                    matched: matchedCount,
+                    updated: modifiedCount,
+                    notFound: notFoundInvoiceNumbers.length,
+                    notFoundInvoiceNumbers,
+                    skipped: rowErrors.length,
+                    rowErrors,
+                },
+                "Barcode bulk import processed"
+            )
+        );
+    } finally {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+    }
+});
+
 type PoRegisterLineItem = { itemCode: string; itemDescription: string; quantity: number };
 type PoRegisterLean = {
     poNumber: string;
