@@ -35,6 +35,12 @@ export interface IEmailSettings {
     // favor of the email/dispatch-status pipeline. Manual RFQ creation via
     // the UI is unaffected either way.
     autoCreateRfqEnabled: boolean;
+    // When on, the payment-reconciliation pipeline auto-creates Gmail drafts
+    // (IMAP APPEND to \Drafts, never sent) for: (a) SHORT_PAYMENT invoice
+    // rows querying JSW's vendor help desk, and (b) invoices >45 days overdue
+    // with no payment received at all. When off, ingestion/matching still
+    // runs (it's just data logging) — only these outbound drafts are gated.
+    autoPaymentFollowUpEnabled: boolean;
 }
 
 /** Default domains to always allow */
@@ -47,6 +53,9 @@ export const DEFAULT_WHITELIST = [
     "@jindalstainless.com",
     "@jswgbs.com",
     "@jsw.co.in",
+    // SBI CMP ePayment Advice — automated bank payment notifications feeding
+    // the payment-reconciliation pipeline (see paymentAdviceExtractionService.ts).
+    "support.cmpcorp@alerts.sbi.bank.in",
 ];
 
 const emailSettingsSchema = new Schema<IEmailSettings>(
