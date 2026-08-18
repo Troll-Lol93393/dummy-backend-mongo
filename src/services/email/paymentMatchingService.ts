@@ -13,15 +13,24 @@ const PREVIOUS_PAID_RECONCILIATION_TOLERANCE = 5;
 // applied when computing the TDS deduction itself.
 const SHORTFALL_TOLERANCE = 1;
 
-async function getSalesTotalsByInvoice(invoiceNumbers: string[]): Promise<Map<string, number>> {
+interface InvoiceSalesTotals {
+    netAmount: number;
+    basicValue: number;
+}
+
+async function getSalesTotalsByInvoice(invoiceNumbers: string[]): Promise<Map<string, InvoiceSalesTotals>> {
     if (invoiceNumbers.length === 0) return new Map();
     const sales = await Sales.find({ invoiceNumber: { $in: invoiceNumbers }, isDeleted: false })
-        .select("invoiceNumber netAmount")
+        .select("invoiceNumber netAmount basicValue")
         .lean();
 
-    const totals = new Map<string, number>();
+    const totals = new Map<string, InvoiceSalesTotals>();
     for (const sale of sales) {
-        totals.set(sale.invoiceNumber, (totals.get(sale.invoiceNumber) || 0) + (sale.netAmount || 0));
+        const existing = totals.get(sale.invoiceNumber) || { netAmount: 0, basicValue: 0 };
+        totals.set(sale.invoiceNumber, {
+            netAmount: existing.netAmount + (sale.netAmount || 0),
+            basicValue: existing.basicValue + (sale.basicValue || 0),
+        });
     }
     return totals;
 }
@@ -65,6 +74,7 @@ interface RowComputation {
     previousPaidAmount: number;
     expectedNet: number;
     remainingExpectedThisTime: number;
+    remainingExpectedBase: number;
     matched: boolean;
     previousPaidReconciliationMismatch: boolean;
 }
@@ -72,19 +82,20 @@ interface RowComputation {
 /** Step 1-4 of the matching rule, per row (no cross-row attribution yet). */
 async function computeRows(
     parsed: ParsedPaymentAdvice,
-    salesTotals: Map<string, number>,
+    salesTotals: Map<string, InvoiceSalesTotals>,
     priorReceivedByInvoice: Map<string, number>
 ): Promise<RowComputation[]> {
     const computations: RowComputation[] = [];
 
     for (const row of parsed.rows) {
-        const existsInSales = salesTotals.has(row.invoiceNumber);
-        if (!existsInSales) {
+        const salesForInvoice = salesTotals.get(row.invoiceNumber);
+        if (!salesForInvoice) {
             // Step 8: never guess — skip amount calculations entirely.
             computations.push({
                 ...row,
                 expectedNet: 0,
                 remainingExpectedThisTime: 0,
+                remainingExpectedBase: 0,
                 matched: false,
                 previousPaidReconciliationMismatch: false,
             });
@@ -95,6 +106,11 @@ async function computeRows(
         // are NOT subtracted here — they surface naturally as a shortfall
         // once actualAllocated (the money that really landed) comes in lower.
         const expectedNet = row.invoiceTotalAmount - row.tdsAmount;
+        // GST-excluded equivalent — used by buildInvoiceRows to test whether
+        // this specific invoice's GST was entirely withheld (confirmed
+        // against real advices as the actual mechanism, rather than a
+        // proportional or sequential shortfall).
+        const expectedBase = salesForInvoice.basicValue - row.tdsAmount;
         let previousPaidReconciliationMismatch = false;
 
         // Step 3: cross-check the PDF's previousPaidAmount against our own
@@ -118,6 +134,7 @@ async function computeRows(
             ...row,
             expectedNet,
             remainingExpectedThisTime: expectedNet - row.previousPaidAmount, // Step 4
+            remainingExpectedBase: expectedBase - row.previousPaidAmount,
             matched: true,
             previousPaidReconciliationMismatch,
         });
@@ -126,21 +143,61 @@ async function computeRows(
     return computations;
 }
 
-/** Step 5-7: sequential ("waterfall") attribution of the advice's actual credited amount, then shortfall + status. */
+const MAX_COMBINATION_SEARCH_ROWS = 20; // 2^20 is already generous; real advices have a handful of rows.
+
+/**
+ * For each matched row, two candidate "actually paid" amounts are possible:
+ * full (GST included) or base-only (this invoice's GST entirely withheld).
+ * Tries every combination across the matched rows in this advice and keeps
+ * the one whose total lands on the advice's credited amount to the rupee —
+ * confirmed against real advices where one specific invoice has its whole
+ * GST withheld while the rest are paid in full, rather than the shortfall
+ * being spread proportionally or by running out of money sequentially.
+ * Prefers the combination with the fewest GST-withheld rows (the simplest
+ * explanation) when more than one combination matches exactly. Returns null
+ * when no combination reconciles exactly — that's a genuine case this model
+ * can't explain, and the caller falls back to sequential allocation.
+ */
+function findGstWithholdCombination(matched: RowComputation[], adviceAmount: number): boolean[] | null {
+    if (matched.length === 0 || matched.length > MAX_COMBINATION_SEARCH_ROWS) return null;
+
+    let best: boolean[] | null = null;
+    let bestWithheldCount = Infinity;
+    const totalCombinations = 2 ** matched.length;
+
+    for (let mask = 0; mask < totalCombinations; mask++) {
+        let sum = 0;
+        let withheldCount = 0;
+        for (let i = 0; i < matched.length; i++) {
+            const isWithheld = (mask & (1 << i)) !== 0;
+            const row = matched[i]!;
+            sum += isWithheld ? Math.max(0, row.remainingExpectedBase) : Math.max(0, row.remainingExpectedThisTime);
+            if (isWithheld) withheldCount++;
+        }
+
+        if (Math.abs(sum - adviceAmount) <= SHORTFALL_TOLERANCE && withheldCount < bestWithheldCount) {
+            best = Array.from({ length: matched.length }, (_, i) => (mask & (1 << i)) !== 0);
+            bestWithheldCount = withheldCount;
+        }
+    }
+
+    return best;
+}
+
+/** Step 5-7: figure out actual allocation per row (GST-withheld combination, or sequential fallback), then shortfall + status. */
 function buildInvoiceRows(
     parsed: ParsedPaymentAdvice,
     computations: RowComputation[],
     existingRowByInvoice: Map<string, IPaymentAdviceInvoiceRow>
 ): IPaymentAdviceInvoiceRow[] {
-    // The advice's one credited amount is applied to invoices in the order
-    // they're listed, filling each one completely before spilling into the
-    // next — not smeared proportionally across all of them. Confirmed
-    // against real advices: one invoice comes out fully paid (only TDS
-    // deducted) while a later one in the same advice is left partially or
-    // entirely unpaid. A proportional split would incorrectly show every
-    // invoice as "a little short" instead of pinpointing which one actually
-    // took the hit.
+    const matched = computations.filter(c => c.matched);
+    const withholdCombination = findGstWithholdCombination(matched, parsed.amount);
+
+    // Fallback only when no GST-withhold combination reconciles exactly:
+    // sequential waterfall, filling each invoice in listed order before
+    // spilling into the next.
     let remainingPool = parsed.amount;
+    let matchedIndex = 0;
 
     return computations.map(c => {
         const existing = existingRowByInvoice.get(c.invoiceNumber);
@@ -170,11 +227,22 @@ function buildInvoiceRows(
             };
         }
 
-        // Step 5: this invoice draws from whatever's left in the pool before
-        // the next invoice gets a chance at it.
         const owed = Math.max(0, c.remainingExpectedThisTime);
-        const actualAllocated = Math.max(0, Math.min(remainingPool, owed));
-        remainingPool = Math.max(0, remainingPool - owed);
+        let actualAllocated: number;
+
+        if (withholdCombination) {
+            // Step 5a: this invoice's GST was either fully withheld or not,
+            // per the combination that reconciled exactly against the total.
+            const isWithheld = withholdCombination[matchedIndex];
+            actualAllocated = isWithheld ? Math.max(0, c.remainingExpectedBase) : owed;
+        } else {
+            // Step 5b (fallback): draws from whatever's left in the pool
+            // before the next invoice gets a chance at it.
+            actualAllocated = Math.max(0, Math.min(remainingPool, owed));
+            remainingPool = Math.max(0, remainingPool - owed);
+        }
+        matchedIndex++;
+
         // Step 6: floor at 0 — overpayment is not a shortfall.
         const shortfallAmount = Math.max(0, owed - actualAllocated);
         // Step 7: ₹1 tolerance on this final comparison only.
