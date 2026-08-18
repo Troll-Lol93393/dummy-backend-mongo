@@ -126,15 +126,21 @@ async function computeRows(
     return computations;
 }
 
-/** Step 5-7: proportional attribution of the advice's actual credited amount, then shortfall + status. */
+/** Step 5-7: sequential ("waterfall") attribution of the advice's actual credited amount, then shortfall + status. */
 function buildInvoiceRows(
     parsed: ParsedPaymentAdvice,
     computations: RowComputation[],
     existingRowByInvoice: Map<string, IPaymentAdviceInvoiceRow>
 ): IPaymentAdviceInvoiceRow[] {
-    const sumRemainingExpected = computations
-        .filter(c => c.matched)
-        .reduce((sum, c) => sum + c.remainingExpectedThisTime, 0);
+    // The advice's one credited amount is applied to invoices in the order
+    // they're listed, filling each one completely before spilling into the
+    // next — not smeared proportionally across all of them. Confirmed
+    // against real advices: one invoice comes out fully paid (only TDS
+    // deducted) while a later one in the same advice is left partially or
+    // entirely unpaid. A proportional split would incorrectly show every
+    // invoice as "a little short" instead of pinpointing which one actually
+    // took the hit.
+    let remainingPool = parsed.amount;
 
     return computations.map(c => {
         const existing = existingRowByInvoice.get(c.invoiceNumber);
@@ -164,11 +170,13 @@ function buildInvoiceRows(
             };
         }
 
-        // Step 5: proportional share of the header's actual credited amount.
-        const actualAllocated =
-            sumRemainingExpected > 0 ? parsed.amount * (c.remainingExpectedThisTime / sumRemainingExpected) : 0;
+        // Step 5: this invoice draws from whatever's left in the pool before
+        // the next invoice gets a chance at it.
+        const owed = Math.max(0, c.remainingExpectedThisTime);
+        const actualAllocated = Math.max(0, Math.min(remainingPool, owed));
+        remainingPool = Math.max(0, remainingPool - owed);
         // Step 6: floor at 0 — overpayment is not a shortfall.
-        const shortfallAmount = Math.max(0, c.remainingExpectedThisTime - actualAllocated);
+        const shortfallAmount = Math.max(0, owed - actualAllocated);
         // Step 7: ₹1 tolerance on this final comparison only.
         const matchStatus = shortfallAmount > SHORTFALL_TOLERANCE ? "SHORT_PAYMENT" : "MATCHED";
 
