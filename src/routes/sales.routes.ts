@@ -16,6 +16,10 @@ import {
     updateSalesTransportDetails,
     downloadTransportDetailsTemplate,
     bulkImportTransportDetails,
+    getBarcodeStatus,
+    setInvoiceBarcode,
+    downloadBarcodeImportTemplate,
+    importBarcodes,
 } from "../controller/sales.controller";
 
 const router = Router();
@@ -31,6 +35,14 @@ router.get("/invoices", getInvoices);
 router.get("/invoices/:invoiceNumber", getInvoiceDetail);
 router.get("/by-po", getPoDispatchList);
 router.get("/by-po/:poNumber", getPoDispatchDetail);
+// Invoice-level barcode management — "/barcodes" (literal) must be registered
+// before the "/:id" catch-all below, or GET /barcodes would be swallowed by it.
+router.get(
+    "/barcodes/template",
+    verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"),
+    downloadBarcodeImportTemplate
+);
+router.get("/barcodes", getBarcodeStatus);
 router.get("/:id", getSalesById);
 router.post("/import", verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"), upload.single("file"), importSales);
 router.get(
@@ -44,6 +56,15 @@ router.post(
     upload.single("file"),
     bulkImportTransportDetails
 );
+router.post(
+    "/barcodes/import",
+    verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"),
+    upload.single("file"),
+    importBarcodes
+);
+// "/barcodes/:invoiceNumber" (literal first segment) is registered before
+// "/:id/transport-details" (param first segment) — more literal segments first.
+router.patch("/barcodes/:invoiceNumber", verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"), setInvoiceBarcode);
 router.patch("/:id/transport-details", verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"), updateSalesTransportDetails);
 router.delete("/:id", verifyRoles("ROLE_OWNER", "ROLE_ADMIN"), deleteSales);
 
