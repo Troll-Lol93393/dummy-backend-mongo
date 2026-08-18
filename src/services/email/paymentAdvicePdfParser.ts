@@ -185,26 +185,34 @@ function parseInvoiceRows(rawText: string): { rows: ParsedPaymentAdviceRow[]; wa
     // invoice number would compute to different expected net amounts and are
     // deliberately left untouched.
     const EXPECTED_NET_DEDUPE_TOLERANCE = 1;
-    const keptExpectedNetsByInvoice = new Map<string, number[]>();
     const dedupedRows: ParsedPaymentAdviceRow[] = [];
 
     for (const row of rows) {
         const expectedNet = row.invoiceTotalAmount - row.tdsAmount;
-        const priorNets = keptExpectedNetsByInvoice.get(row.invoiceNumber) || [];
-        const isDuplicate = priorNets.some(
-            net => Math.abs(net - expectedNet) <= EXPECTED_NET_DEDUPE_TOLERANCE
+        const duplicateIndex = dedupedRows.findIndex(
+            kept =>
+                kept.invoiceNumber === row.invoiceNumber &&
+                Math.abs(kept.invoiceTotalAmount - kept.tdsAmount - expectedNet) <= EXPECTED_NET_DEDUPE_TOLERANCE
         );
 
-        if (isDuplicate) {
+        if (duplicateIndex !== -1) {
             warnings.push(
                 `Invoice row ${row.invoiceNumber} appears more than once with the same expected net amount ` +
                     `(Rs.${expectedNet.toFixed(2)}) — treated as the same line rendered twice by the source PDF, duplicate dropped`
             );
+            // Prefer the occurrence with TDS explicitly broken out (non-zero)
+            // — the other occurrence often nets TDS into the total and
+            // reports TDS as 0, which would corrupt the base-value-minus-TDS
+            // figure used downstream to detect invoice-specific GST
+            // withholding.
+            const kept = dedupedRows[duplicateIndex]!;
+            if (row.tdsAmount > kept.tdsAmount) {
+                dedupedRows[duplicateIndex] = row;
+            }
             continue;
         }
 
         dedupedRows.push(row);
-        keptExpectedNetsByInvoice.set(row.invoiceNumber, [...priorNets, expectedNet]);
     }
 
     return { rows: dedupedRows, warnings };
