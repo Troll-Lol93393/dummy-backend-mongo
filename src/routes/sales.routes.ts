@@ -20,6 +20,7 @@ import {
     setInvoiceBarcode,
     downloadBarcodeImportTemplate,
     importBarcodes,
+    setInvoiceTransportDetails,
 } from "../controller/sales.controller";
 
 const router = Router();
@@ -65,6 +66,11 @@ router.post(
 // "/barcodes/:invoiceNumber" (literal first segment) is registered before
 // "/:id/transport-details" (param first segment) — more literal segments first.
 router.patch("/barcodes/:invoiceNumber", verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"), setInvoiceBarcode);
+router.patch(
+    "/invoices/:invoiceNumber/transport-details",
+    verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"),
+    setInvoiceTransportDetails
+);
 router.patch("/:id/transport-details", verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"), updateSalesTransportDetails);
 router.delete("/:id", verifyRoles("ROLE_OWNER", "ROLE_ADMIN"), deleteSales);
 

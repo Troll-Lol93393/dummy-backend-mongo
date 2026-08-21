@@ -24,6 +24,7 @@ function dispatchedRows(result: DispatchMatchResult): string {
         .map(
             d => `<tr>
     <td style="${CELL_STYLE}">${escapeHtml(result.poNumber)}</td>
+    <td style="${CELL_STYLE}">${escapeHtml(d.invoiceNumber)}</td>
     <td style="${CELL_STYLE}">${escapeHtml(d.itemCode)}</td>
     <td style="${CELL_STYLE}">${escapeHtml(d.itemName)}</td>
     <td style="${CELL_STYLE}">${formatDate(d.dispatchDate)}</td>
@@ -47,7 +48,7 @@ function balanceRow(result: DispatchMatchResult): string {
     return `<tr>
     <td style="${CELL_STYLE}">${escapeHtml(result.poNumber)}</td>
     <td style="${CELL_STYLE}">${escapeHtml(result.itemCode)}</td>
-    <td style="${CELL_STYLE}" colspan="5">${escapeHtml(result.itemDescription)} — Balance quantity of ${result.balanceQty} nos is under manufacturing and will be dispatched shortly. We will update you once dispatched.</td>
+    <td style="${CELL_STYLE}" colspan="6">${escapeHtml(result.itemDescription)} — Balance quantity of ${result.balanceQty} nos is under manufacturing and will be dispatched shortly. We will update you once dispatched.</td>
     <td style="${CELL_STYLE};color:#b45309;font-weight:600;">Pending</td>
   </tr>`;
 }
@@ -55,7 +56,7 @@ function balanceRow(result: DispatchMatchResult): string {
 function poNotFoundRow(result: DispatchMatchResult): string {
     return `<tr>
     <td style="${CELL_STYLE}">${escapeHtml(result.poNumber)}</td>
-    <td style="${CELL_STYLE}" colspan="6">PO not found in our records — kindly reconfirm the PO number</td>
+    <td style="${CELL_STYLE}" colspan="7">PO not found in our records — kindly reconfirm the PO number</td>
     <td style="${CELL_STYLE};color:#b91c1c;font-weight:600;">Not found</td>
   </tr>`;
 }
@@ -85,6 +86,7 @@ export function generateDispatchStatusDraftHtml(results: DispatchMatchResult[]):
   <thead>
     <tr>
       <th style="${HEADER_CELL_STYLE}">PO Number</th>
+      <th style="${HEADER_CELL_STYLE}">Invoice Number</th>
       <th style="${HEADER_CELL_STYLE}">Item Code</th>
       <th style="${HEADER_CELL_STYLE}">Item Name</th>
       <th style="${HEADER_CELL_STYLE}">Dispatch Date</th>
