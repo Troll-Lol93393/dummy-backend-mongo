@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import fs from "fs";
 import mongoose from "mongoose";
 import { parse } from "csv-parse/sync";
+import XLSX from "xlsx";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
 import { ApiResponse } from "../utils/apiResponse";
@@ -12,6 +13,46 @@ import { mapRowToSales, ParsedSalesRow, RawSalesRow } from "../services/sales/sa
 
 const BULK_CHUNK_SIZE = 100;
 
+/** ZIP local-file-header signature — .xlsx/.xls (modern) files are ZIP archives under the hood. */
+const XLSX_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+/**
+ * Reads an uploaded CSV/TSV/XLSX file into row objects keyed by header name.
+ * Users routinely upload whatever their source system exports without
+ * checking the exact format, so this only fails on genuinely required data
+ * (missing columns), not on file type or delimiter:
+ * - .xlsx (detected by the ZIP signature, not just the filename extension,
+ *   since browsers/OSes get the extension wrong often enough) is parsed with
+ *   the xlsx library and its first sheet used.
+ * - Otherwise the text is decoded and the header line's comma vs. tab count
+ *   picks the delimiter — csv-parse's default (comma-only) silently treats
+ *   an entire tab-delimited header as one field instead of failing loudly.
+ */
+function parseTabularUpload(filePath: string): Record<string, string>[] {
+    const buffer = fs.readFileSync(filePath);
+
+    if (buffer.subarray(0, 4).equals(XLSX_SIGNATURE)) {
+        const workbook = XLSX.read(buffer, { type: "buffer" });
+        const firstSheetName = workbook.SheetNames[0];
+        if (!firstSheetName) return [];
+        const sheet = workbook.Sheets[firstSheetName];
+        if (!sheet) return [];
+        return XLSX.utils.sheet_to_json<Record<string, string>>(sheet, { defval: "", raw: false });
+    }
+
+    const raw = buffer.toString("utf-8").replace(/^﻿/, "");
+    const headerLine = raw.split(/\r?\n/, 1)[0] ?? "";
+    const delimiter = (headerLine.match(/\t/g)?.length ?? 0) > (headerLine.match(/,/g)?.length ?? 0) ? "\t" : ",";
+
+    return parse(raw, {
+        columns: true,
+        skip_empty_lines: true,
+        relax_column_count: true,
+        trim: true,
+        delimiter,
+    });
+}
+
 export const importSales = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
     if (!req.file) {
         throw new ApiError(400, "No file uploaded");
@@ -20,13 +61,7 @@ export const importSales = asyncHandler(async (req: Request, res: Response, _nex
     const filePath = req.file.path;
 
     try {
-        const raw = fs.readFileSync(filePath, "utf-8").replace(/^﻿/, "");
-        const rows: RawSalesRow[] = parse(raw, {
-            columns: true,
-            skip_empty_lines: true,
-            relax_column_count: true,
-            trim: true,
-        });
+        const rows: RawSalesRow[] = parseTabularUpload(filePath);
 
         const parsedRecords: ParsedSalesRow[] = [];
         const rowErrors: string[] = [];
@@ -257,13 +292,7 @@ export const bulkImportTransportDetails = asyncHandler(
         const filePath = req.file.path;
 
         try {
-            const raw = fs.readFileSync(filePath, "utf-8").replace(/^﻿/, "");
-            const rows: Record<string, string>[] = parse(raw, {
-                columns: true,
-                skip_empty_lines: true,
-                relax_column_count: true,
-                trim: true,
-            });
+            const rows: Record<string, string>[] = parseTabularUpload(filePath);
 
             type ValidRow = {
                 rowNumber: number;
