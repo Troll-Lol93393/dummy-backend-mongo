@@ -599,9 +599,17 @@ export const getInvoices = asyncHandler(async (req: Request, res: Response, _nex
 
     const results = await Sales.aggregate([
         { $match: match },
+        { $sort: { _id: 1 } },
         {
             $group: {
                 _id: "$invoiceNumber",
+                // Any line item's _id works as a stable, URL-safe identifier for
+                // the whole invoice — routes resolve it back to invoiceNumber
+                // server-side. Avoids putting the raw invoice number (which
+                // contains "/", e.g. "SE/2526/000066") in a URL path segment,
+                // which breaks Next.js dynamic routes and CDN-level normalization
+                // even when percent-encoded.
+                salesId: { $first: "$_id" },
                 dispatchDate: { $first: "$dispatchDate" },
                 financialYear: { $first: "$financialYear" },
                 poNumber: { $first: "$poNumber" },
@@ -617,6 +625,7 @@ export const getInvoices = asyncHandler(async (req: Request, res: Response, _nex
         {
             $project: {
                 _id: 0,
+                id: "$salesId",
                 invoiceNumber: "$_id",
                 dispatchDate: 1,
                 financialYear: 1,
@@ -650,16 +659,26 @@ export const getInvoices = asyncHandler(async (req: Request, res: Response, _nex
 
 /**
  * Full line-item detail for a single invoice, for the table's "View" action.
+ * Keyed by a Sales line-item _id (any line on the invoice works) rather than
+ * the raw invoice number — invoice numbers contain "/" (e.g.
+ * "SE/2526/000066"), which breaks a Next.js dynamic route segment even when
+ * percent-encoded, since some CDNs normalize %2F back to "/" before routing.
  */
 export const getInvoiceDetail = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-    const { invoiceNumber } = req.params;
-    const items = await Sales.find({ invoiceNumber, isDeleted: false })
-        .sort({ serialNumber: 1 })
-        .lean();
+    const { id } = req.params;
 
-    if (items.length === 0) {
+    if (!mongoose.Types.ObjectId.isValid(id!)) {
+        throw new ApiError(400, "Invalid invoice ID");
+    }
+
+    const anchor = await Sales.findOne({ _id: id, isDeleted: false }).select("invoiceNumber").lean();
+    if (!anchor) {
         throw new ApiError(404, "Invoice not found");
     }
+
+    const items = await Sales.find({ invoiceNumber: anchor.invoiceNumber, isDeleted: false })
+        .sort({ serialNumber: 1 })
+        .lean();
 
     const first = items[0]!;
     const header = {
@@ -785,15 +804,27 @@ const EDITABLE_INVOICE_TRANSPORT_FIELDS = ["transporterName", "transporterGstin"
 
 /**
  * Sets transporter/consignment info across every Sales line-item document
- * sharing the given invoice number — same invoice-level pattern as
- * setInvoiceBarcode above, since a single invoice always ships as one
- * consignment in this workflow. E-way bill number is deliberately not
+ * sharing the invoice resolved from the given Sales _id — same invoice-level
+ * pattern as setInvoiceBarcode above, since a single invoice always ships as
+ * one consignment in this workflow. Keyed by _id rather than the raw invoice
+ * number for the same reason as getInvoiceDetail — invoice numbers contain
+ * "/" and break URL path segments. E-way bill number is deliberately not
  * editable here: it arrives with the invoice import itself and isn't
  * something this dialog should be backfilling.
  */
 export const setInvoiceTransportDetails = asyncHandler(
     async (req: Request, res: Response, _next: NextFunction) => {
-        const { invoiceNumber } = req.params;
+        const { id } = req.params;
+
+        if (!mongoose.Types.ObjectId.isValid(id!)) {
+            throw new ApiError(400, "Invalid invoice ID");
+        }
+
+        const anchor = await Sales.findOne({ _id: id, isDeleted: false }).select("invoiceNumber").lean();
+        if (!anchor) {
+            throw new ApiError(404, "Invoice not found");
+        }
+        const invoiceNumber = anchor.invoiceNumber;
 
         const update: Record<string, string> = {};
         for (const field of EDITABLE_INVOICE_TRANSPORT_FIELDS) {
@@ -811,10 +842,6 @@ export const setInvoiceTransportDetails = asyncHandler(
         }
 
         const result = await Sales.updateMany({ invoiceNumber, isDeleted: false }, { $set: update });
-
-        if (result.matchedCount === 0) {
-            throw new ApiError(404, "No sales records found for this invoice number");
-        }
 
         res.status(200).json(
             new ApiResponse(
