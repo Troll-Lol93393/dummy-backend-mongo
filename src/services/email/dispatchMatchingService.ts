@@ -2,7 +2,7 @@ import { Sales, ISales } from "../../models/sales.model";
 import { PORegister } from "../../models/poRegister.model";
 import { DispatchRequestItem } from "./dispatchRequestExtractionService";
 
-export type DispatchMatchStatus = "DISPATCHED" | "NOT_YET_DISPATCHED" | "PO_NOT_FOUND";
+export type DispatchMatchStatus = "DISPATCHED" | "PENDING" | "PO_NOT_FOUND";
 
 export interface DispatchLine {
     invoiceNumber: string;
@@ -15,18 +15,15 @@ export interface DispatchLine {
     ewayBillNumber?: string;
 }
 
-export interface OrderedLine {
-    itemCode: string;
-    itemDescription: string;
-    quantity: number;
-}
-
 export interface DispatchMatchResult {
     poNumber: string;
-    itemCode?: string;
+    itemCode: string;
+    itemDescription: string;
     status: DispatchMatchStatus;
+    orderedQty: number;
+    dispatchedQty: number;
+    balanceQty: number;
     dispatches: DispatchLine[];
-    orderedItems?: OrderedLine[];
 }
 
 function toDispatchLine(sale: ISales): DispatchLine {
@@ -43,11 +40,13 @@ function toDispatchLine(sale: ISales): DispatchLine {
 }
 
 /**
- * Three-bucket outcome per request line: DISPATCHED (found in Sales — the
- * shipment already went out), NOT_YET_DISPATCHED (PO exists but nothing
- * shipped against it yet, per-item granularity when an item code was given),
- * or PO_NOT_FOUND (PO isn't registered at all — a data-entry question, not
- * a dispatch question).
+ * One result per ordered line item on the requested PO (every line when the
+ * request didn't name a specific item code) — never a single blanket status
+ * for the whole PO, since a PO is routinely shipped in more than one partial
+ * lot. orderedQty/dispatchedQty/balanceQty let the draft show exactly what
+ * shipped and what's still owed, instead of collapsing a 44-of-100 partial
+ * shipment into a bare "DISPATCHED" flag that looks like the order is done.
+ * PO_NOT_FOUND is the only case with nothing to report a quantity for.
  */
 export async function matchDispatchRequests(
     requests: DispatchRequestItem[]
@@ -63,53 +62,57 @@ export async function matchDispatchRequests(
             : Promise.resolve([]),
     ]);
 
-    const salesByPo = new Map<string, ISales[]>();
+    const salesByPoItem = new Map<string, ISales[]>();
     for (const sale of salesRecords) {
         if (!sale.poNumber) continue;
-        const group = salesByPo.get(sale.poNumber) || [];
+        const key = `${sale.poNumber}::${sale.itemCode}`;
+        const group = salesByPoItem.get(key) || [];
         group.push(sale);
-        salesByPo.set(sale.poNumber, group);
+        salesByPoItem.set(key, group);
     }
     const poRegisterByPo = new Map(poRegisters.map(p => [p.corePoNumber, p]));
 
-    return requests.map(request => {
-        const salesForPo = salesByPo.get(request.poNumber) || [];
-        const salesForRequest = request.itemCode
-            ? salesForPo.filter(s => s.itemCode === request.itemCode)
-            : salesForPo;
+    const results: DispatchMatchResult[] = [];
 
-        if (salesForRequest.length > 0) {
-            return {
-                poNumber: request.poNumber,
-                itemCode: request.itemCode,
-                status: "DISPATCHED",
-                dispatches: salesForRequest.map(toDispatchLine),
-            };
-        }
-
+    for (const request of requests) {
         const poRegister = poRegisterByPo.get(request.poNumber);
-        if (poRegister) {
-            const orderedItems = request.itemCode
-                ? poRegister.items.filter(i => i.itemCode === request.itemCode)
-                : poRegister.items;
-            return {
+
+        if (!poRegister) {
+            results.push({
                 poNumber: request.poNumber,
-                itemCode: request.itemCode,
-                status: "NOT_YET_DISPATCHED",
+                itemCode: request.itemCode || "",
+                itemDescription: "",
+                status: "PO_NOT_FOUND",
+                orderedQty: 0,
+                dispatchedQty: 0,
+                balanceQty: 0,
                 dispatches: [],
-                orderedItems: orderedItems.map(i => ({
-                    itemCode: i.itemCode,
-                    itemDescription: i.itemDescription,
-                    quantity: i.quantity,
-                })),
-            };
+            });
+            continue;
         }
 
-        return {
-            poNumber: request.poNumber,
-            itemCode: request.itemCode,
-            status: "PO_NOT_FOUND",
-            dispatches: [],
-        };
-    });
+        const orderedItems = request.itemCode
+            ? poRegister.items.filter(i => i.itemCode === request.itemCode)
+            : poRegister.items;
+
+        for (const item of orderedItems) {
+            const salesForItem = salesByPoItem.get(`${request.poNumber}::${item.itemCode}`) || [];
+            const dispatchedQty = salesForItem.reduce((sum, s) => sum + (s.quantity || 0), 0);
+            const orderedQty = item.quantity;
+            const balanceQty = Math.max(orderedQty - dispatchedQty, 0);
+
+            results.push({
+                poNumber: request.poNumber,
+                itemCode: item.itemCode,
+                itemDescription: salesForItem[0]?.itemName || item.itemDescription,
+                status: dispatchedQty > 0 ? "DISPATCHED" : "PENDING",
+                orderedQty,
+                dispatchedQty,
+                balanceQty,
+                dispatches: salesForItem.map(toDispatchLine),
+            });
+        }
+    }
+
+    return results;
 }

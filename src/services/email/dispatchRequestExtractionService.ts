@@ -78,6 +78,63 @@ Respond ONLY with valid JSON: {"items": [{"poNumber": "4100617702", "itemCode": 
     );
 }
 
+/**
+ * Customer reminders often embed a table directly in the HTML body (e.g. a
+ * "PO Balance Qty" table listing specific items) rather than as an
+ * attachment. Once converted to plain text the columns run together with no
+ * delimiters (e.g. "...41005594764026/Aug/2026SHETH ENGINEERING100057782101011824BUSH,PARALLEL...EA2"),
+ * so this is handed to AI rather than parsed with a fixed-column regex.
+ * Without this, a bare PO-number-only request falls back to "every item ever
+ * ordered on this PO" in matchDispatchRequests, which answers with items the
+ * customer never asked about in this specific email.
+ */
+async function extractItemsFromBodyText(subject: string, textBody: string): Promise<DispatchRequestItem[]> {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) return [];
+
+    const combined = `${subject}\n${textBody}`.trim();
+    if (!combined) return [];
+
+    const prompt = `The email below is a customer's dispatch-status reminder. It may contain an embedded table (columns are often run together with no spacing or line breaks once converted from HTML, e.g. "Vijayanagar Works41005594764026/Aug/2026SHETH ENGINEERING100057782101011824BUSH,PARALLEL...EA2") listing specific PO and item combinations the customer is asking about.
+
+For each row you can identify, extract:
+- poNumber: a purchase order number (commonly a 10-digit number, often starting with 4)
+- itemCode: the material/item code for that row (commonly a 10-digit number), only if you can actually see one
+
+Email:
+${combined.slice(0, 6000)}
+
+Respond ONLY with valid JSON: {"items": [{"poNumber": "4100559476", "itemCode": "2101012479"}]}. If no table with item-level detail is present, respond {"items": []}. Do not guess an itemCode you cannot see in the text.`;
+
+    const response = await retryWithBackoff(
+        () =>
+            axios.post(
+                GROQ_API_URL,
+                {
+                    model: GROQ_MODEL,
+                    messages: [{ role: "user", content: prompt }],
+                    temperature: 0.1,
+                    max_tokens: 1024,
+                    response_format: { type: "json_object" },
+                },
+                {
+                    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+                    timeout: 30000,
+                }
+            ),
+        { maxRetries: 0, initialDelayMs: 2000 }
+    );
+
+    const text = response.data?.choices?.[0]?.message?.content || "";
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return [];
+
+    const parsed = JSON.parse(jsonMatch[0]) as { items?: DispatchRequestItem[] };
+    return (parsed.items || []).filter(
+        (item): item is DispatchRequestItem => typeof item.poNumber === "string" && item.poNumber.trim().length > 0
+    );
+}
+
 async function extractFromAttachment(attachment: IEmailAttachment): Promise<DispatchRequestItem[]> {
     if (!attachment.cloudinaryUrl || !isSpreadsheetAttachment(attachment)) return [];
 
@@ -136,6 +193,14 @@ export async function extractDispatchRequests(email: {
 }): Promise<DispatchRequestItem[]> {
     const bodyPoNumbers = extractPoNumbersFromText(`${email.subject} ${email.textBody}`);
     const items: DispatchRequestItem[] = bodyPoNumbers.map(poNumber => ({ poNumber }));
+
+    try {
+        items.push(...(await extractItemsFromBodyText(email.subject, email.textBody)));
+    } catch (err) {
+        logger.warn("DISPATCH_EXTRACT", "Failed to extract item-level detail from email body", {
+            error: String(err),
+        });
+    }
 
     for (const attachment of email.attachments) {
         try {
