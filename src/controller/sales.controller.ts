@@ -222,21 +222,9 @@ export const updateSalesTransportDetails = asyncHandler(
     }
 );
 
-const TRANSPORT_TEMPLATE_HEADERS = [
-    "Invoice Number",
-    "Transporter Name",
-    "Transporter GSTIN",
-    "Consignment Number",
-    "E-way Bill No.",
-];
+const TRANSPORT_TEMPLATE_HEADERS = ["Invoice Number", "Transporter Name", "Transporter GSTIN", "Consignment Number"];
 
-const TRANSPORT_TEMPLATE_EXAMPLE_ROW = [
-    "SE/2526/000066",
-    "VRL Logistics Ltd.",
-    "27ABCDE1234F1Z5",
-    "CN-000123",
-    "851234567890123",
-];
+const TRANSPORT_TEMPLATE_EXAMPLE_ROW = ["SE/2526/000066", "VRL Logistics Ltd.", "27ABCDE1234F1Z5", "CN-000123"];
 
 function toCsvLine(cells: string[]): string {
     return cells
@@ -299,7 +287,6 @@ export const bulkImportTransportDetails = asyncHandler(
                 if (row["Transporter Name"]?.trim()) update.transporterName = row["Transporter Name"].trim();
                 if (row["Transporter GSTIN"]?.trim()) update.transporterGstin = row["Transporter GSTIN"].trim();
                 if (row["Consignment Number"]?.trim()) update.consignmentNumber = row["Consignment Number"].trim();
-                if (row["E-way Bill No."]?.trim()) update.ewayBillNumber = row["E-way Bill No."].trim();
 
                 if (Object.keys(update).length === 0) {
                     rowErrors.push(`Row ${rowNumber}: no transporter fields provided, skipped`);
@@ -793,6 +780,51 @@ export const setInvoiceBarcode = asyncHandler(async (req: Request, res: Response
         )
     );
 });
+
+const EDITABLE_INVOICE_TRANSPORT_FIELDS = ["transporterName", "transporterGstin", "consignmentNumber"] as const;
+
+/**
+ * Sets transporter/consignment info across every Sales line-item document
+ * sharing the given invoice number — same invoice-level pattern as
+ * setInvoiceBarcode above, since a single invoice always ships as one
+ * consignment in this workflow. E-way bill number is deliberately not
+ * editable here: it arrives with the invoice import itself and isn't
+ * something this dialog should be backfilling.
+ */
+export const setInvoiceTransportDetails = asyncHandler(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const { invoiceNumber } = req.params;
+
+        const update: Record<string, string> = {};
+        for (const field of EDITABLE_INVOICE_TRANSPORT_FIELDS) {
+            const value = req.body[field];
+            if (typeof value === "string" && value.trim().length > 0) {
+                update[field] = value.trim();
+            }
+        }
+
+        if (Object.keys(update).length === 0) {
+            throw new ApiError(
+                400,
+                "At least one of transporterName, transporterGstin, consignmentNumber is required"
+            );
+        }
+
+        const result = await Sales.updateMany({ invoiceNumber, isDeleted: false }, { $set: update });
+
+        if (result.matchedCount === 0) {
+            throw new ApiError(404, "No sales records found for this invoice number");
+        }
+
+        res.status(200).json(
+            new ApiResponse(
+                200,
+                { invoiceNumber, ...update, matched: result.matchedCount, modified: result.modifiedCount },
+                "Invoice transport details updated successfully"
+            )
+        );
+    }
+);
 
 const BARCODE_TEMPLATE_HEADERS = ["Invoice Number", "Barcode"];
 const BARCODE_TEMPLATE_EXAMPLE_ROW = ["SE/2526/000066", "12345678901234567"];
