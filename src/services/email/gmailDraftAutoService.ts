@@ -15,11 +15,14 @@ function toReplySubject(subject: string): string {
 
 /**
  * Auto-creates a Gmail draft (IMAP-appended to \Drafts, never sent) for
- * DISPATCH_STATUS_REQUEST emails — but only includes PO/item lines that are
- * actually DISPATCHED. A PO that's not in our records, or ordered but not
- * yet shipped, gets no automatic line — those need a human's judgment, not
- * an auto-draft. If nothing in the request is dispatched yet, no draft is
- * created at all and the email is retried on the next cycle.
+ * DISPATCH_STATUS_REQUEST emails. Every PO/item line that resolves to a real
+ * PO gets a line in the draft: dispatched lines carry real invoice/date/qty,
+ * anything still owed (partial or fully pending) gets a standard placeholder
+ * sentence instead of being silently omitted. Only a PO that isn't in our
+ * records at all produces no usable line, so if every requested PO comes
+ * back PO_NOT_FOUND, no draft is created and the email is retried on the
+ * next cycle. Since this only ever creates a draft (never sends), a human
+ * always reviews and can edit the placeholder wording before it goes out.
  *
  * Fully gated by settings.autoGmailDraftEnabled: when off, this returns
  * immediately after the settings read — no candidate query, no IMAP
@@ -42,10 +45,10 @@ export async function createDispatchDraftsInGmail(): Promise<number> {
     for (const email of candidates) {
         try {
             const matches = await matchDispatchRequests(email.dispatchRequests);
-            const dispatchedOnly = matches.filter(m => m.status === "DISPATCHED");
-            if (dispatchedOnly.length === 0) continue;
+            const draftable = matches.filter(m => m.status !== "PO_NOT_FOUND");
+            if (draftable.length === 0) continue;
 
-            const html = generateDispatchStatusDraftHtml(dispatchedOnly);
+            const html = generateDispatchStatusDraftHtml(draftable);
             const { raw, messageId } = await buildMimeMessage({
                 to: [{ name: email.from.name, address: email.from.address }],
                 subject: toReplySubject(email.subject),
@@ -98,7 +101,8 @@ export async function checkSentDispatchDrafts(): Promise<number> {
     try {
         const mailboxes = await client.list();
         const sentMailbox =
-            mailboxes.find(mb => mb.specialUse === "\\Sent") || mailboxes.find(mb => /^sent/i.test(mb.name));
+            mailboxes.find(mb => mb.specialUse === "\\Sent") ||
+            mailboxes.find(mb => /^sent/i.test(mb.name));
         if (!sentMailbox) return 0;
 
         await client.mailboxOpen(sentMailbox.path, { readOnly: true });
@@ -116,9 +120,13 @@ export async function checkSentDispatchDrafts(): Promise<number> {
                     updated += 1;
                 }
             } catch (err) {
-                logger.error("DISPATCH_DRAFT", `Failed to check sent-status for email ${email._id}`, {
-                    error: String(err),
-                });
+                logger.error(
+                    "DISPATCH_DRAFT",
+                    `Failed to check sent-status for email ${email._id}`,
+                    {
+                        error: String(err),
+                    }
+                );
             }
         }
     } finally {
