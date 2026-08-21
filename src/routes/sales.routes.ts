@@ -33,7 +33,7 @@ router.get("/stats", getSalesStats);
 router.get("/po-fulfillment", getPoFulfillment);
 router.get("/financial-years", getFinancialYears);
 router.get("/invoices", getInvoices);
-router.get("/invoices/:invoiceNumber", getInvoiceDetail);
+router.get("/invoices/:id", getInvoiceDetail);
 router.get("/by-po", getPoDispatchList);
 router.get("/by-po/:poNumber", getPoDispatchDetail);
 // Invoice-level barcode management — "/barcodes" (literal) must be registered
@@ -67,7 +67,7 @@ router.post(
 // "/:id/transport-details" (param first segment) — more literal segments first.
 router.patch("/barcodes/:invoiceNumber", verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"), setInvoiceBarcode);
 router.patch(
-    "/invoices/:invoiceNumber/transport-details",
+    "/invoices/:id/transport-details",
     verifyRoles("ROLE_OWNER", "ROLE_ADMIN", "ROLE_OFFICE_STAFF"),
     setInvoiceTransportDetails
 );
