@@ -104,7 +104,7 @@ export async function matchDispatchRequests(
             results.push({
                 poNumber: request.poNumber,
                 itemCode: item.itemCode,
-                itemDescription: salesForItem[0]?.itemName || item.itemDescription,
+                itemDescription: salesForItem[0]?.itemName || item.itemDescription.split("\n")[0] || "",
                 status: dispatchedQty > 0 ? "DISPATCHED" : "PENDING",
                 orderedQty,
                 dispatchedQty,
