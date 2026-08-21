@@ -8,7 +8,7 @@ import { retryWithBackoff } from "../../utils/retryWithBackoff";
 import { extractDispatchRequests } from "./dispatchRequestExtractionService";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 
 const CLASSIFICATION_SYSTEM_PROMPT = `You are an AI assistant that classifies procurement/vendor emails for Sheth Engineering, a manufacturing company.
 

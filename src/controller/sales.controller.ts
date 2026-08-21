@@ -224,8 +224,6 @@ export const updateSalesTransportDetails = asyncHandler(
 
 const TRANSPORT_TEMPLATE_HEADERS = [
     "Invoice Number",
-    "Item Code",
-    "Serial Number",
     "Transporter Name",
     "Transporter GSTIN",
     "Consignment Number",
@@ -234,8 +232,6 @@ const TRANSPORT_TEMPLATE_HEADERS = [
 
 const TRANSPORT_TEMPLATE_EXAMPLE_ROW = [
     "SE/2526/000066",
-    "ITM-1001",
-    "1",
     "VRL Logistics Ltd.",
     "27ABCDE1234F1Z5",
     "CN-000123",
@@ -249,11 +245,10 @@ function toCsvLine(cells: string[]): string {
 }
 
 /**
- * Serial Number is optional in the template — most users only know invoice
- * number + item code, and a plain invoice+itemCode match is enough since
- * transporter/consignment info is the same for an entire shipment. It's kept
- * as a column so a row can be narrowed to one line item when an invoice has
- * the same item code split across multiple serials.
+ * Keyed by Invoice Number alone — transporter/consignment/e-way-bill info is
+ * the same for an entire shipment, so one row updates every line item on
+ * that invoice. No item-level targeting: a single invoice always ships as
+ * one consignment in this workflow.
  */
 export const downloadTransportDetailsTemplate = asyncHandler(
     async (_req: Request, res: Response, _next: NextFunction) => {
@@ -285,8 +280,6 @@ export const bulkImportTransportDetails = asyncHandler(
             type ValidRow = {
                 rowNumber: number;
                 invoiceNumber: string;
-                itemCode: string;
-                serialNumber?: number;
                 update: Record<string, string>;
             };
 
@@ -296,10 +289,9 @@ export const bulkImportTransportDetails = asyncHandler(
             rows.forEach((row, idx) => {
                 const rowNumber = idx + 2;
                 const invoiceNumber = row["Invoice Number"]?.trim();
-                const itemCode = row["Item Code"]?.trim();
 
-                if (!invoiceNumber || !itemCode) {
-                    rowErrors.push(`Row ${rowNumber}: Invoice Number and Item Code are required`);
+                if (!invoiceNumber) {
+                    rowErrors.push(`Row ${rowNumber}: Invoice Number is required`);
                     return;
                 }
 
@@ -314,41 +306,31 @@ export const bulkImportTransportDetails = asyncHandler(
                     return;
                 }
 
-                const serialNumberRaw = row["Serial Number"]?.trim();
-                const serialNumber =
-                    serialNumberRaw && !Number.isNaN(Number(serialNumberRaw))
-                        ? Number(serialNumberRaw)
-                        : undefined;
-
-                validRows.push({ rowNumber, invoiceNumber, itemCode, serialNumber, update });
+                validRows.push({ rowNumber, invoiceNumber, update });
             });
 
             const uniqueInvoiceNumbers = [...new Set(validRows.map(r => r.invoiceNumber))];
             const existing = uniqueInvoiceNumbers.length
                 ? await Sales.find({ invoiceNumber: { $in: uniqueInvoiceNumbers }, isDeleted: false })
-                      .select("invoiceNumber itemCode")
+                      .select("invoiceNumber")
                       .lean()
                 : [];
-            const existingCombos = new Set(existing.map(e => `${e.invoiceNumber}|${e.itemCode}`));
+            const existingInvoiceNumbers = new Set(existing.map(e => e.invoiceNumber));
 
             const bulkOps: mongoose.AnyBulkWriteOperation[] = [];
             let notFoundCount = 0;
 
             for (const row of validRows) {
-                if (!existingCombos.has(`${row.invoiceNumber}|${row.itemCode}`)) {
-                    rowErrors.push(
-                        `Row ${row.rowNumber}: no sales record found for invoice ${row.invoiceNumber} / item ${row.itemCode}`
-                    );
+                if (!existingInvoiceNumbers.has(row.invoiceNumber)) {
+                    rowErrors.push(`Row ${row.rowNumber}: no sales record found for invoice ${row.invoiceNumber}`);
                     notFoundCount += 1;
                     continue;
                 }
 
                 const filter: Record<string, unknown> = {
                     invoiceNumber: row.invoiceNumber,
-                    itemCode: row.itemCode,
                     isDeleted: false,
                 };
-                if (row.serialNumber !== undefined) filter.serialNumber = row.serialNumber;
 
                 bulkOps.push({ updateMany: { filter, update: { $set: row.update } } });
             }
