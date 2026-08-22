@@ -21,6 +21,12 @@ export interface IBomEntry {
     hardness?: IBomHardness[];
 }
 
+export interface IItemHardness {
+    hardnessType: string;
+    value: string;
+    measurement: string;
+}
+
 export interface Items {
     itemCode: string;
     itemName: string;
@@ -28,6 +34,16 @@ export interface Items {
     itemType: "SET" | "ASSEMBLY" | "UNIT";
     size?: string;
     bom?: IBomEntry[];
+    // Carried over from the legacy ITEMMAST/ITEMDTL sync - see jow-legacy-sync.
+    drawingNumber?: string;
+    uom?: string;
+    hsnCode?: string;
+    ut?: string;
+    moc?: string;
+    testing?: string;
+    hardness?: IItemHardness[];
+    // Full raw legacy row, for fields not otherwise captured above.
+    legacySource?: Record<string, unknown>;
     isDeleted?: boolean;
     deletedAt?: Date;
 }
@@ -105,6 +121,19 @@ export const itemSchema: Schema<Items> = new Schema(
         bom: {
             type: [bomEntrySchema],
             default: [],
+        },
+        drawingNumber: { type: String, trim: true },
+        uom: { type: String, trim: true },
+        hsnCode: { type: String, trim: true },
+        ut: { type: String, trim: true },
+        moc: { type: String, trim: true },
+        testing: { type: String, trim: true },
+        hardness: {
+            type: [bomHardnessSchema],
+            default: [],
+        },
+        legacySource: {
+            type: Schema.Types.Mixed,
         },
         isDeleted: {
             type: Boolean,

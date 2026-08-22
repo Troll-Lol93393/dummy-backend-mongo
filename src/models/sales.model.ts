@@ -36,11 +36,18 @@ export interface ISales {
     cgstAmount: number;
     igstAmount: number;
     netAmount: number;
-    status: "DISPATCHED";
+    status: "DISPATCHED" | "CANCELLED";
     poRegister?: mongoose.Types.ObjectId;
     item?: mongoose.Types.ObjectId;
     sourceFileName?: string;
     sourceRowNumber?: number;
+    // Carried over from the legacy SALES sync - see jow-legacy-sync.
+    jobNumber?: string;
+    deliveryDate?: Date;
+    cancelDate?: Date;
+    irn?: string;
+    irnDate?: Date;
+    legacySource?: Record<string, unknown>;
     isDeleted: boolean;
     deletedAt?: Date;
 }
@@ -169,7 +176,7 @@ const salesSchema: Schema<ISales> = new Schema(
         },
         status: {
             type: String,
-            enum: ["DISPATCHED"],
+            enum: ["DISPATCHED", "CANCELLED"],
             default: "DISPATCHED",
         },
         poRegister: {
@@ -187,6 +194,12 @@ const salesSchema: Schema<ISales> = new Schema(
         sourceRowNumber: {
             type: Number,
         },
+        jobNumber: { type: String, trim: true },
+        deliveryDate: { type: Date },
+        cancelDate: { type: Date },
+        irn: { type: String, trim: true },
+        irnDate: { type: Date },
+        legacySource: { type: Schema.Types.Mixed },
         isDeleted: {
             type: Boolean,
             default: false,

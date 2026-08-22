@@ -56,6 +56,7 @@ import { auditLogRoutes } from "./routes/auditLog.routes";
 import { emailRoutes } from "./routes/email.routes";
 import salesRoutes from "./routes/sales.routes";
 import { paymentRoutes } from "./routes/payment.routes";
+import { syncRoutes } from "./routes/sync.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -78,6 +79,7 @@ app.use("/api/v1/audit-logs", auditLogRoutes);
 app.use("/api/v1/email", emailRoutes);
 app.use("/api/v1/sales", salesRoutes);
 app.use("/api/v1/payment", paymentRoutes);
+app.use("/api/v1/internal/sync", syncRoutes);
 
 // Health check endpoint — designed for UptimeRobot (every 5 minutes)
 // Returns detailed system health for monitoring and keeps Render active
