@@ -67,23 +67,59 @@ export const syncDeleteItems = asyncHandler(async (req: Request, res: Response) 
 // which has no legacyCode) gets merged with instead of duplicated.
 export const syncClients = asyncHandler(async (req: Request, res: Response) => {
     const records = requireRecords(req);
+
     let upsertedCount = 0;
     let modifiedCount = 0;
 
-    for (const batch of chunk(records, BULK_CHUNK_SIZE)) {
+    // Safety: remove duplicate legacy codes within the same request
+    const uniqueRecords = Array.from(
+        new Map(
+            records.map(record => [
+                String(record.legacyCode),
+                record
+            ])
+        ).values()
+    );
+
+    for (const batch of chunk(uniqueRecords, BULK_CHUNK_SIZE)) {
         const ops = batch.map(record => ({
             updateOne: {
-                filter: { $or: [{ legacyCode: record.legacyCode }, { companyName: record.companyName }] },
-                update: { $set: { ...record, isDeleted: false } },
-                upsert: true,
-            },
+                // IMPORTANT:
+                // Always match a legacy sync record by legacyCode only.
+                filter: {
+                    legacyCode: String(record.legacyCode)
+                },
+
+                update: {
+                    $set: {
+                        ...record,
+                        legacyCode: String(record.legacyCode),
+                        isDeleted: false
+                    }
+                },
+
+                upsert: true
+            }
         }));
-        const result = await Client.bulkWrite(ops, { ordered: false });
+
+        const result = await Client.bulkWrite(ops, {
+            ordered: false
+        });
+
         upsertedCount += result.upsertedCount;
         modifiedCount += result.modifiedCount;
     }
 
-    res.status(200).json(new ApiResponse(200, { upsertedCount, modifiedCount }, "Clients synced"));
+    res.status(200).json(
+        new ApiResponse(
+            200,
+            {
+                upsertedCount,
+                modifiedCount
+            },
+            "Clients synced"
+        )
+    );
 });
 
 export const syncDeleteClients = asyncHandler(async (req: Request, res: Response) => {
