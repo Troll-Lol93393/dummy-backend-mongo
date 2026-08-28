@@ -16,7 +16,7 @@ export interface ParsedRfpData {
 
 /**
  * Parse date strings from Ariba documents.
- * Ariba uses D/M/YYYY HH:mm format (day-first, 24h clock).
+ * Ariba uses M/D/YYYY HH:mm AM/PM format (US format, month first).
  * Returns ISO 8601 string or empty string if unparseable.
  */
 function parseAribaDate(dateStr: string): string {
