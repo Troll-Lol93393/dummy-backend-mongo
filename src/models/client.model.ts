@@ -13,6 +13,9 @@ export interface IClient {
     country: string;
     buyerName: string;
     buyerContact: string;
+    // Legacy MASTER.CODE - dedupe key used by the legacy sync (see jow-legacy-sync).
+    legacyCode?: string;
+    legacySource?: Record<string, unknown>;
     isDeleted: boolean;
 }
 
@@ -66,6 +69,14 @@ export const clientSchema: Schema<IClient> = new Schema(
         buyerContact: {
             type: String,
             trim: true,
+        },
+        legacyCode: {
+            type: String,
+            trim: true,
+            index: { unique: true, sparse: true },
+        },
+        legacySource: {
+            type: Schema.Types.Mixed,
         },
         isDeleted: {
             type: Boolean,

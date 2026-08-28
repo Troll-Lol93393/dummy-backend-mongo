@@ -22,6 +22,9 @@ interface PopulatedCostingItem {
     item: { itemCode: string; itemName: string };
     quantity: number;
     itemTechSpecs?: { material?: string };
+    isRegret?: boolean;
+    regretReason?: string;
+    regretReasonCustom?: string;
 }
 
 async function buildCommercialSnapshot(rfqId: string): Promise<ICommercialSnapshot> {
@@ -43,6 +46,12 @@ async function buildCommercialSnapshot(rfqId: string): Promise<ICommercialSnapsh
 
     const lineItems = (rfq.items as unknown as PopulatedCostingItem[]) ?? [];
 
+    const REGRET_REASON_LABELS: Record<string, string> = {
+        NOT_IN_SCOPE: "Not in our scope",
+        DRAWING_NOT_RECEIVED: "Drawing not received",
+        ITEM_NOT_AVAILABLE: "Item not available",
+    };
+
     let grandTotalBeforeGst = 0;
     let grandGstAmount = 0;
     let grandTotalWithGst = 0;
@@ -50,16 +59,32 @@ async function buildCommercialSnapshot(rfqId: string): Promise<ICommercialSnapsh
     const items = lineItems
         .filter(li => li.item)
         .map((li, idx) => {
+            const isRegret = li.isRegret === true;
+
+            let regretReasonText = "";
+            if (isRegret) {
+                if (li.regretReason === "CUSTOM") {
+                    regretReasonText = li.regretReasonCustom || "Custom reason";
+                } else {
+                    regretReasonText =
+                        REGRET_REASON_LABELS[li.regretReason ?? ""] ?? li.regretReason ?? "";
+                }
+            }
+
             const costing = costingMap.get(li._id.toString());
-            const sellingPrice = costing?.sellingPrice ?? 0;
+            // Regretted items get zero pricing
+            const sellingPrice = isRegret ? 0 : (costing?.sellingPrice ?? 0);
             const quantity = li.quantity ?? 1;
             const totalBeforeGst = sellingPrice * quantity;
             const gstAmount = Math.round(((totalBeforeGst * GST_PERCENT) / 100) * 100) / 100;
             const totalWithGst = Math.round((totalBeforeGst + gstAmount) * 100) / 100;
 
-            grandTotalBeforeGst += totalBeforeGst;
-            grandGstAmount += gstAmount;
-            grandTotalWithGst += totalWithGst;
+            // Regretted items do NOT contribute to grand totals
+            if (!isRegret) {
+                grandTotalBeforeGst += totalBeforeGst;
+                grandGstAmount += gstAmount;
+                grandTotalWithGst += totalWithGst;
+            }
 
             return {
                 serialNumber: li.serialNumber || String(idx + 1),
@@ -73,6 +98,8 @@ async function buildCommercialSnapshot(rfqId: string): Promise<ICommercialSnapsh
                 totalBeforeGst,
                 gstAmount,
                 totalWithGst,
+                isRegret,
+                regretReason: regretReasonText,
             };
         });
 

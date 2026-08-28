@@ -13,6 +13,8 @@ interface CommercialItem {
     totalBeforeGst: number;
     gstAmount: number;
     totalWithGst: number;
+    isRegret?: boolean;
+    regretReason?: string;
 }
 
 interface CommercialOfferData {
@@ -64,19 +66,20 @@ export async function generateCommercialOfferExcel(
         pageSetup: { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1 },
     });
 
-    // Column widths — 11 columns
+    // Column widths — 12 columns (added Remarks)
     ws.columns = [
         { width: 8 }, // A — Sl No
         { width: 14 }, // B — Item Code
-        { width: 28 }, // C — Item Name
-        { width: 18 }, // D — Material
+        { width: 24 }, // C — Item Name
+        { width: 16 }, // D — Material
         { width: 8 }, // E — Qty
-        { width: 16 }, // F — Sale Price
-        { width: 14 }, // G — HSN Code
-        { width: 10 }, // H — GST %
-        { width: 18 }, // I — Total Before GST
-        { width: 14 }, // J — GST Amt
-        { width: 18 }, // K — Total with GST
+        { width: 15 }, // F — Sale Price
+        { width: 13 }, // G — HSN Code
+        { width: 9 }, // H — GST %
+        { width: 16 }, // I — Total Before GST
+        { width: 13 }, // J — GST Amt
+        { width: 16 }, // K — Total with GST
+        { width: 20 }, // L — Remarks
     ];
 
     let row = 1;
@@ -86,7 +89,7 @@ export async function generateCommercialOfferExcel(
     // ══════════════════════════════════════
 
     // Row 1: Company name
-    ws.mergeCells(`A${row}:K${row}`);
+    ws.mergeCells(`A${row}:L${row}`);
     const companyCell = ws.getCell(`A${row}`);
     companyCell.value = company.name;
     companyCell.font = { name: "Calibri", size: 18, bold: true, color: { argb: HEADER_FONT } };
@@ -109,7 +112,7 @@ export async function generateCommercialOfferExcel(
     row++;
 
     // Row 2: Tagline
-    ws.mergeCells(`A${row}:K${row}`);
+    ws.mergeCells(`A${row}:L${row}`);
     const tagCell = ws.getCell(`A${row}`);
     tagCell.value = company.tagline || "";
     tagCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "8FAABE" } };
@@ -119,7 +122,7 @@ export async function generateCommercialOfferExcel(
     row++;
 
     // Row 3: Gold accent strip
-    ws.mergeCells(`A${row}:K${row}`);
+    ws.mergeCells(`A${row}:L${row}`);
     ws.getCell(`A${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: GOLD } };
     ws.getRow(row).height = 4;
     row++;
@@ -131,7 +134,7 @@ export async function generateCommercialOfferExcel(
     ws.mergeCells(`E${row}:G${row}`);
     ws.getCell(`E${row}`).value = "Vendor Code: " + (company.vendorCode || "—");
     ws.getCell(`E${row}`).font = { name: "Calibri", size: 9, bold: true };
-    ws.mergeCells(`H${row}:K${row}`);
+    ws.mergeCells(`H${row}:L${row}`);
     ws.getCell(`H${row}`).value =
         `Date: ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
     ws.getCell(`H${row}`).font = { name: "Calibri", size: 9, bold: true };
@@ -140,7 +143,7 @@ export async function generateCommercialOfferExcel(
     row++;
 
     // Row 5: Address
-    ws.mergeCells(`A${row}:K${row}`);
+    ws.mergeCells(`A${row}:L${row}`);
     ws.getCell(`A${row}`).value =
         [company.address, company.phone ? `Ph: ${company.phone}` : ""]
             .filter(Boolean)
@@ -157,7 +160,7 @@ export async function generateCommercialOfferExcel(
     // ══════════════════════════════════════
     // SUBJECT LINE
     // ══════════════════════════════════════
-    ws.mergeCells(`A${row}:K${row}`);
+    ws.mergeCells(`A${row}:L${row}`);
     const subjectCell = ws.getCell(`A${row}`);
     subjectCell.value = `COMMERCIAL OFFER — RFQ No: ${data.prNumber}`;
     subjectCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: NAVY } };
@@ -171,7 +174,7 @@ export async function generateCommercialOfferExcel(
     ws.mergeCells(`A${row}:F${row}`);
     ws.getCell(`A${row}`).value = `Company: ${data.companyName}    |    Location: ${data.location}`;
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 10 };
-    ws.mergeCells(`G${row}:K${row}`);
+    ws.mergeCells(`G${row}:L${row}`);
     ws.getCell(`G${row}`).value = `Owner: ${data.ownerName}`;
     ws.getCell(`G${row}`).font = { name: "Calibri", size: 10 };
     ws.getCell(`G${row}`).alignment = { horizontal: "right" };
@@ -197,6 +200,7 @@ export async function generateCommercialOfferExcel(
         "Total Before GST (₹)",
         "GST Amount (₹)",
         "Total with GST (₹)",
+        "Remarks",
     ];
     const headerRow = ws.getRow(row);
     tableHeaders.forEach((h, i) => {
@@ -217,28 +221,38 @@ export async function generateCommercialOfferExcel(
         const isEven = idx % 2 === 0;
         const bgColor = isEven ? LIGHT_BG : WHITE;
 
+        const isRegret = item.isRegret === true;
+        const remarksText = isRegret ? `REGRET: ${item.regretReason || ""}` : "";
+
         const values = [
             item.serialNumber || String(idx + 1),
             item.itemCode,
             item.itemName,
             item.material || "—",
             item.quantity,
-            formatCurrency(item.sellingPrice),
+            isRegret ? "—" : formatCurrency(item.sellingPrice),
             item.hsnCode,
             `${item.gstPercent}%`,
-            formatCurrency(item.totalBeforeGst),
-            formatCurrency(item.gstAmount),
-            formatCurrency(item.totalWithGst),
+            isRegret ? "—" : formatCurrency(item.totalBeforeGst),
+            isRegret ? "—" : formatCurrency(item.gstAmount),
+            isRegret ? "—" : formatCurrency(item.totalWithGst),
+            remarksText,
         ];
 
         const dataRow = ws.getRow(row);
         values.forEach((v, i) => {
             const cell = dataRow.getCell(i + 1);
             cell.value = v;
-            cell.font = { name: "Calibri", size: 9, bold: i === 0 };
+            const isRegretRemarks = i === 11 && isRegret;
+            cell.font = {
+                name: "Calibri",
+                size: 9,
+                bold: i === 0 || isRegretRemarks,
+                ...(isRegretRemarks ? { color: { argb: "C0392B" } } : {}),
+            };
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: bgColor } };
             cell.alignment = {
-                horizontal: i >= 4 ? "right" : "left",
+                horizontal: i >= 4 && i < 11 ? "right" : "left",
                 vertical: "middle",
                 wrapText: true,
             };
@@ -262,7 +276,7 @@ export async function generateCommercialOfferExcel(
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 10, bold: true };
     ws.getCell(`A${row}`).alignment = { horizontal: "right" };
     ws.getCell(`A${row}`).border = thinBorder();
-    ws.mergeCells(`I${row}:K${row}`);
+    ws.mergeCells(`I${row}:L${row}`);
     ws.getCell(`I${row}`).value = `₹ ${formatCurrency(data.grandTotalBeforeGst)}`;
     ws.getCell(`I${row}`).font = { name: "Calibri", size: 10, bold: true };
     ws.getCell(`I${row}`).alignment = { horizontal: "right" };
@@ -277,7 +291,7 @@ export async function generateCommercialOfferExcel(
     ws.getCell(`A${row}`).font = { name: "Calibri", size: 10, bold: true };
     ws.getCell(`A${row}`).alignment = { horizontal: "right" };
     ws.getCell(`A${row}`).border = thinBorder();
-    ws.mergeCells(`I${row}:K${row}`);
+    ws.mergeCells(`I${row}:L${row}`);
     ws.getCell(`I${row}`).value = `₹ ${formatCurrency(data.grandGstAmount)}`;
     ws.getCell(`I${row}`).font = { name: "Calibri", size: 10, bold: true };
     ws.getCell(`I${row}`).alignment = { horizontal: "right" };
@@ -298,7 +312,7 @@ export async function generateCommercialOfferExcel(
     ws.getCell(`A${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     ws.getCell(`A${row}`).alignment = { horizontal: "right", vertical: "middle" };
     ws.getCell(`A${row}`).border = thinBorder();
-    ws.mergeCells(`I${row}:K${row}`);
+    ws.mergeCells(`I${row}:L${row}`);
     ws.getCell(`I${row}`).value = `₹ ${formatCurrency(data.grandTotalWithGst)}`;
     ws.getCell(`I${row}`).font = {
         name: "Calibri",
@@ -320,7 +334,7 @@ export async function generateCommercialOfferExcel(
     row++;
 
     // Delivery
-    ws.mergeCells(`A${row}:K${row}`);
+    ws.mergeCells(`A${row}:L${row}`);
     const deliveryCell = ws.getCell(`A${row}`);
     deliveryCell.value = `Delivery: ${data.deliveryWeeks ? `${data.deliveryWeeks} weeks` : "As mutually agreed"} from the date of order confirmation`;
     deliveryCell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "1E8449" } };

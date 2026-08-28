@@ -1,8 +1,13 @@
 import axios from "axios";
 import { ParsedRfpData, ParsedItem } from "./docParser";
+import { retryWithBackoff } from "../../utils/retryWithBackoff";
 
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+export interface ProviderConfig {
+    name: string;
+    apiUrl: string;
+    model: string;
+    apiKey: string;
+}
 
 const SYSTEM_PROMPT = `You are a data extraction assistant specialized in extracting structured data from RFP (Request for Proposal/Quotation) documents used in industrial procurement.
 
@@ -19,10 +24,12 @@ Return ONLY valid JSON with this exact structure (no markdown, no explanation, n
     "prNumber": "string - the first 10-digit number from filename (e.g. 1600630211)",
     "supplyType": "string - type of supply (Revenue Supply, Capital Supply, etc)",
     "location": "string - plant/delivery location",
-    "companyName": "string - vendor/company name",
+    "companyName": "string - the buyer/company name (e.g. 'JSW Steel Limited'). Look for 'ShipTo' fields or company references. Must be a short name, NOT a paragraph of text.",
+    "startDate": "string - the response start date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Response start date', 'Start Date', or 'Open Date' fields in the document. IMPORTANT: Ariba dates are in M/D/YYYY format (US format, month first). Convert accurately to ISO 8601.",
+    "dueDate": "string - the due date / deadline / response end date in ISO 8601 format (YYYY-MM-DDTHH:mm:ss). Look for 'Due date', 'End Date', 'Deadline', or 'Closing Date' fields in the document. IMPORTANT: Ariba dates are in M/D/YYYY format (US format, month first). Convert accurately to ISO 8601.",
     "items": [
         {
-            "serialNumber": "string - the section/serial number from the document (e.g. '7.3', '7.4', '7.3.1'). Look for dot-notation numbers that label each line item in the document",
+            "serialNumber": "string - COPY the section/serial number EXACTLY as it appears in the document (e.g. '7.3', '7.4', '7.3.1'). Do NOT invent, renumber, or reformat. If the document shows '7.3', output '7.3'.",
             "itemCode": "string - 10-digit code starting with 2100 extracted from the 18-digit number in the document",
             "itemName": "string - short item name",
             "itemDesc": "string - full item description",
@@ -49,44 +56,61 @@ Extract ALL items if multiple are present.`;
 
 export async function extractWithAI(
     rawText: string,
-    originalFilename: string
+    originalFilename: string,
+    provider: ProviderConfig
 ): Promise<{ success: boolean; data: ParsedRfpData; confidence: number }> {
     const emptyResult: ParsedRfpData = {
         prNumber: "",
         supplyType: "",
         location: "",
         companyName: "",
+        startDate: "",
+        dueDate: "",
         items: [],
         rawText,
     };
 
     try {
-        const apiKey = process.env.GROQ_API_KEY;
-        if (!apiKey) {
-            throw new Error("GROQ_API_KEY is not set in environment variables");
+        // Smart truncation to stay within free-tier TPM limits (~3,000 tokens input budget).
+        // Ariba RFP docs: header/dates are at the start, item table is at the end (after long T&C section).
+        // Take first 6,000 chars (PR number, dates, company) + last 6,000 chars (item table).
+        let truncatedText: string;
+        if (rawText.length <= 12000) {
+            truncatedText = rawText;
+        } else {
+            truncatedText = rawText.substring(0, 6000) + "\n\n[...middle section omitted...]\n\n" + rawText.substring(rawText.length - 6000);
         }
+        const userMessage = `FILENAME: ${originalFilename}\n\nDOCUMENT TEXT:\n${truncatedText}`;
 
-        const userMessage = `FILENAME: ${originalFilename}\n\nDOCUMENT TEXT:\n${rawText}`;
+        const extraHeaders: Record<string, string> =
+            provider.name === "OpenRouter"
+                ? { "HTTP-Referer": "https://sheth-engg-backend-pvzq.onrender.com" }
+                : {};
 
-        const response = await axios.post(
-            GROQ_API_URL,
-            {
-                model: GROQ_MODEL,
-                messages: [
-                    { role: "system", content: SYSTEM_PROMPT },
-                    { role: "user", content: userMessage },
-                ],
-                temperature: 0.1,
-                max_tokens: 4096,
-                response_format: { type: "json_object" },
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                },
-                timeout: 60000,
-            }
+        const response = await retryWithBackoff(
+            () =>
+                axios.post(
+                    provider.apiUrl,
+                    {
+                        model: provider.model,
+                        messages: [
+                            { role: "system", content: SYSTEM_PROMPT },
+                            { role: "user", content: userMessage },
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 2000,
+                        response_format: { type: "json_object" },
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${provider.apiKey}`,
+                            "Content-Type": "application/json",
+                            ...extraHeaders,
+                        },
+                        timeout: 60000,
+                    }
+                ),
+            { maxRetries: 0, initialDelayMs: 2000 }
         );
 
         const aiResponse = response.data?.choices?.[0]?.message?.content;
@@ -109,23 +133,151 @@ export async function extractWithAI(
             confidence,
         };
     } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : "Unknown AI extraction error";
-        console.error("AI extraction failed:", message);
-        return { success: false, data: emptyResult, confidence: 0 };
+        // Always rethrow so the orchestrator can try the next provider
+        throw error;
     }
 }
 
-// Check if Groq API is reachable and key is valid
-export async function isAIAvailable(): Promise<boolean> {
-    try {
-        const apiKey = process.env.GROQ_API_KEY;
-        if (!apiKey) return false;
+// Focused single-item system prompt — much shorter to save tokens
+const SINGLE_ITEM_SYSTEM_PROMPT = `You are extracting ONE specific item from an RFP document.
+Return ONLY valid JSON (no markdown, no explanation):
+{
+  "serialNumber": "string - exact section number from the document (e.g. '7.3')",
+  "itemCode": "string - 10-digit code starting with 2100 (extracted from 18-digit code in document)",
+  "itemName": "string - short item name",
+  "itemDesc": "string - full description",
+  "itemType": "UNIT or SET or ASSEMBLY",
+  "uom": "string - unit of measure (EA, KG, MTR, NOS, SET, etc)",
+  "quantity": number,
+  "drawingNumber": "string - drawing/DRG number if mentioned",
+  "technical": {
+    "material": "string - material/MOC",
+    "diameter": "string",
+    "length": "string",
+    "weight": "string",
+    "grade": "string"
+  }
+}
+If a field is not found use empty string or 0.`;
 
-        const response = await axios.get("https://api.groq.com/openai/v1/models", {
-            headers: { Authorization: `Bearer ${apiKey}` },
-            timeout: 5000,
-        });
-        return response.status === 200;
+export async function extractSingleItemWithAI(
+    rawText: string,
+    originalFilename: string,
+    serialNumber: string,
+    provider: ProviderConfig
+): Promise<{ success: boolean; item: ParsedItem | null; confidence: number }> {
+    // Extract a focused slice of text around the serial number to save tokens
+    const focusedText = extractFocusedText(rawText, serialNumber);
+    const userMessage = `FILENAME: ${originalFilename}\nEXTRACT ITEM WITH SERIAL NUMBER: ${serialNumber}\n\nDOCUMENT TEXT:\n${focusedText}`;
+
+    const extraHeaders: Record<string, string> =
+        provider.name === "OpenRouter"
+            ? { "HTTP-Referer": "https://sheth-engg-backend-pvzq.onrender.com" }
+            : {};
+
+    try {
+        const response = await retryWithBackoff(
+            () =>
+                axios.post(
+                    provider.apiUrl,
+                    {
+                        model: provider.model,
+                        messages: [
+                            { role: "system", content: SINGLE_ITEM_SYSTEM_PROMPT },
+                            { role: "user", content: userMessage },
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 600,
+                        response_format: { type: "json_object" },
+                    },
+                    {
+                        headers: {
+                            Authorization: `Bearer ${provider.apiKey}`,
+                            "Content-Type": "application/json",
+                            ...extraHeaders,
+                        },
+                        timeout: 30000,
+                    }
+                ),
+            { maxRetries: 0, initialDelayMs: 1000 }
+        );
+
+        const aiResponse = response.data?.choices?.[0]?.message?.content;
+        if (!aiResponse) return { success: false, item: null, confidence: 0 };
+
+        const jsonStr = extractJsonFromResponse(aiResponse);
+        if (!jsonStr) return { success: false, item: null, confidence: 0 };
+
+        const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+        const tech = (parsed.technical || {}) as Record<string, unknown>;
+
+        const item: ParsedItem = {
+            serialNumber: String(parsed.serialNumber || serialNumber),
+            itemCode: String(parsed.itemCode || ""),
+            itemName: String(parsed.itemName || ""),
+            itemDesc: String(parsed.itemDesc || ""),
+            itemType: validateItemType(String(parsed.itemType || "UNIT")),
+            uom: String(parsed.uom || ""),
+            quantity: Number(parsed.quantity) || 0,
+            drawingNumber: String(parsed.drawingNumber || ""),
+            technical: {
+                material: String(tech.material || ""),
+                hardness: String(tech.hardness || ""),
+                surfaceFinish: String(tech.surfaceFinish || ""),
+                heatTreatment: String(tech.heatTreatment || ""),
+                diameter: String(tech.diameter || ""),
+                length: String(tech.length || ""),
+                weight: String(tech.weight || ""),
+                grade: String(tech.grade || ""),
+            },
+        };
+
+        const confidence = item.itemCode ? 80 : item.itemName && item.quantity > 0 ? 50 : 20;
+        return { success: confidence >= 50, item, confidence };
+    } catch (error: unknown) {
+        throw error;
+    }
+}
+
+// Extract a focused slice of text around the target serial number to minimise token usage
+function extractFocusedText(rawText: string, serialNumber: string): string {
+    const escaped = serialNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(^|\\n)\\s*${escaped}[\\s\\t.:]`, "m");
+    const match = pattern.exec(rawText);
+    if (match && match.index !== undefined) {
+        const start = Math.max(0, match.index - 200);
+        const end = Math.min(rawText.length, match.index + 3000);
+        return rawText.substring(start, end);
+    }
+    // Fallback: last 4000 chars (item table is usually at the end)
+    return rawText.length > 8000
+        ? rawText.substring(rawText.length - 4000)
+        : rawText;
+}
+
+// Check if the given provider API is reachable and key is valid
+export async function isAIAvailable(provider: ProviderConfig): Promise<boolean> {
+    try {
+        if (!provider.apiKey) return false;
+
+        // Try the /models endpoint first; fall back to assuming available if it doesn't exist
+        // (some providers like Cerebras may not expose a /models endpoint)
+        const modelsUrl = provider.apiUrl.replace(/\/chat\/completions$/, "/models");
+        try {
+            const response = await axios.get(modelsUrl, {
+                headers: { Authorization: `Bearer ${provider.apiKey}` },
+                timeout: 5000,
+            });
+            return response.status === 200;
+        } catch (modelsErr: unknown) {
+            // If /models returns 404 or similar, assume the provider is available
+            // (the completions endpoint will validate the key on actual use)
+            if (axios.isAxiosError(modelsErr) && modelsErr.response?.status === 404) {
+                return true;
+            }
+            // Network error or timeout on /models — assume unavailable
+            throw modelsErr;
+        }
     } catch {
         return false;
     }
@@ -196,11 +348,18 @@ function normalizeAIResponse(parsed: Record<string, unknown>, rawText: string): 
         });
     }
 
+    // Sanitize scalar fields — if any field is absurdly long, the AI dumped document text into it
+    const companyName = String(parsed.companyName || "");
+    const location = String(parsed.location || "");
+    const supplyType = String(parsed.supplyType || "");
+
     return {
         prNumber: String(parsed.prNumber || ""),
-        supplyType: String(parsed.supplyType || ""),
-        location: String(parsed.location || ""),
-        companyName: String(parsed.companyName || ""),
+        supplyType: supplyType.length <= 100 ? supplyType : "",
+        location: location.length <= 200 ? location : "",
+        companyName: companyName.length <= 200 ? companyName : "",
+        startDate: String(parsed.startDate || ""),
+        dueDate: String(parsed.dueDate || ""),
         items,
         rawText,
     };

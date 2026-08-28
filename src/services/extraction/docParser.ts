@@ -8,8 +8,54 @@ export interface ParsedRfpData {
     supplyType: string;
     location: string;
     companyName: string;
+    startDate: string;
+    dueDate: string;
     items: ParsedItem[];
     rawText: string;
+}
+
+/**
+ * Parse date strings from Ariba documents.
+ * Ariba uses D/M/YYYY HH:mm format (day-first, 24h clock).
+ * Returns ISO 8601 string or empty string if unparseable.
+ */
+function parseAribaDate(dateStr: string): string {
+    if (!dateStr) return "";
+    dateStr = dateStr.trim();
+
+    // Ariba uses M/D/YYYY HH:mm AM/PM (US format) — parse this FIRST
+    const mdyTime = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
+    if (mdyTime) {
+        const [, month, day, year, hours, minutes, ampm] = mdyTime;
+        const m = parseInt(month!, 10);
+        const dd = parseInt(day!, 10);
+        if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) {
+            let h = parseInt(hours!, 10);
+            if (ampm) {
+                if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+                if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+            }
+            const d = new Date(parseInt(year!, 10), m - 1, dd, h, parseInt(minutes!, 10));
+            if (!isNaN(d.getTime())) return d.toISOString();
+        }
+    }
+
+    // Try M/D/YYYY (no time)
+    const mdy = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mdy) {
+        const m = parseInt(mdy[1]!, 10);
+        const dd = parseInt(mdy[2]!, 10);
+        if (m >= 1 && m <= 12 && dd >= 1 && dd <= 31) {
+            const d = new Date(parseInt(mdy[3]!, 10), m - 1, dd);
+            if (!isNaN(d.getTime())) return d.toISOString();
+        }
+    }
+
+    // Last resort: try native Date parser
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d.toISOString();
+
+    return "";
 }
 
 export interface ParsedItem {
@@ -48,13 +94,38 @@ async function extractTextFromPdf(filePath: string): Promise<string> {
     return result.text;
 }
 
+// Extract text from HTML file by stripping tags
+function extractTextFromHtml(filePath: string): string {
+    const html = fs.readFileSync(filePath, "utf8");
+    // Remove script and style blocks, then strip tags
+    return html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/gi, " ")
+        .replace(/&amp;/gi, "&")
+        .replace(/&lt;/gi, "<")
+        .replace(/&gt;/gi, ">")
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/gi, "'")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 // Extract text from file based on extension
 export async function extractTextFromFile(filePath: string): Promise<string> {
     const ext = path.extname(filePath).toLowerCase();
     if (ext === ".doc" || ext === ".docx") {
+        // Check if the file is actually HTML (Ariba "Print Event Information" saves as .doc but is HTML)
+        const head = fs.readFileSync(filePath, "utf8").substring(0, 100);
+        if (head.includes("<!DOCTYPE") || head.includes("<html")) {
+            return extractTextFromHtml(filePath);
+        }
         return extractTextFromDoc(filePath);
     } else if (ext === ".pdf") {
         return extractTextFromPdf(filePath);
+    } else if (ext === ".html" || ext === ".htm") {
+        return extractTextFromHtml(filePath);
     }
     throw new Error(`Unsupported file type: ${ext}`);
 }
@@ -78,7 +149,7 @@ function parseFilename(filename: string): {
 
     // Try to parse the known pattern: RFP - {10digit}-{10digit}-SupplyType-LOCATION-ITEM_DESC
     const rfpMatch = nameWithoutExt.match(
-        /^RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+)-(.+)$/i
+        /^RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+(?:\s*-\s*[A-Z]+)*)-(.+)$/i
     );
 
     if (rfpMatch) {
@@ -87,6 +158,21 @@ function parseFilename(filename: string): {
         result.supplyType = rfpMatch[3]?.trim() ?? "";
         result.location = rfpMatch[4]?.trim() ?? "";
         result.itemDesc = rfpMatch[5]?.trim() ?? "";
+    }
+
+    // Also handle "RFP Templates_PR_{10digit}_{10digit}-{LOCATION}-SupplyType" pattern
+    if (!result.prNumber) {
+        const templatesMatch = nameWithoutExt.match(
+            /RFP\s+Templates[_-]PR[_-](\d{10})[_-](\d{10})[_-]([A-Z_]+)[_-](.*)/i
+        );
+        if (templatesMatch) {
+            result.prNumber = templatesMatch[1] ?? "";
+            result.location = (templatesMatch[3] ?? "").replace(/_/g, " ").trim();
+            const rest = templatesMatch[4] ?? "";
+            const supplyMatch = rest.match(/(Revenue\s+S(?:upply)?|Capital\s+S(?:upply)?)/i);
+            if (supplyMatch) result.supplyType = supplyMatch[1]?.trim() ?? "";
+            result.itemDesc = rest.replace(/(Revenue|Capital)\s+S(?:upply)?\s*/i, "").trim();
+        }
     }
 
     return result;
@@ -101,6 +187,8 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
         supplyType: filenameMeta.supplyType,
         location: filenameMeta.location,
         companyName: "",
+        startDate: "",
+        dueDate: "",
         items: [],
         rawText,
     };
@@ -112,23 +200,105 @@ function parseRfpText(rawText: string, filename: string): ParsedRfpData {
             data.prNumber = prMatch[1]?.trim() ?? "";
         }
     }
+    // Fallback: find 10-digit numbers starting with 16 (Ariba PR numbers)
+    if (!data.prNumber) {
+        const prMatches = rawText.match(/\b(16\d{8})\b/g);
+        if (prMatches && prMatches.length > 0) {
+            data.prNumber = prMatches[0]!;
+        }
+    }
 
-    // Extract company name
-    const companyMatch = rawText.match(
-        /(?:Company|Vendor|Supplier|Party|Firm)\s*(?:Name)?[:\s]*([^\n\r]+)/i
+    // Extract company name from RFQ document
+    // Strategy 1: Ariba docs consistently have "ShipTo {CompanyName} P.O." pattern in item sections
+    const shipToMatch = rawText.match(
+        /ShipTo\s+([A-Z][A-Za-z\s]+(?:Limited|Ltd|Pvt|Inc|Corp|Steel|Industries|Group|Metallics)(?:\s+(?:Limited|Ltd|Pvt))?)/i
     );
-    if (companyMatch) {
-        data.companyName = companyMatch[1]?.trim() ?? "";
+    if (shipToMatch) {
+        data.companyName = shipToMatch[1]?.trim() ?? "";
+    }
+    // Strategy 2: Ariba docs have "XXX Limited has invited you" or "Buyer XXX Limited"
+    if (!data.companyName) {
+        const aribaCompanyMatch = rawText.match(
+            /(\b[A-Z][A-Za-z\s]+(?:Limited|Ltd|Pvt|Inc|Corp|Steel|Industries|Group|Metallics)(?:\s+(?:Limited|Ltd|Pvt))?)\b/
+        );
+        if (aribaCompanyMatch) {
+            data.companyName = aribaCompanyMatch[1]?.trim() ?? "";
+        }
+    }
+    // Strategy 3: Explicit "Company Name:" label (only capture up to 150 chars to avoid runaway matches)
+    if (!data.companyName) {
+        const companyMatch = rawText.match(
+            /(?:Company|Vendor|Firm)\s+Name\s*[:\s]+([^\n\r]{1,150})/i
+        );
+        if (companyMatch) {
+            // Take only up to the first comma or common delimiter
+            const candidate = companyMatch[1]?.trim() ?? "";
+            const cleaned = candidate.split(/[,;|]/)[0]?.trim() ?? "";
+            if (cleaned.length > 0 && cleaned.length <= 150) {
+                data.companyName = cleaned;
+            }
+        }
+    }
+    // Safety: companyName should never exceed 200 chars — if it does, it's garbage
+    if (data.companyName.length > 200) {
+        data.companyName = "";
     }
 
     // Extract location if not from filename
+    // Strategy 1: Known JSW plant locations
+    const KNOWN_LOCATIONS = [
+        "VIJAYANAGAR", "DOLVI", "SALEM", "TARAPUR", "VASIND",
+        "KALMESHWAR", "ALIBAUG", "BELLARY", "TORANAGALLU",
+    ];
+    if (!data.location) {
+        const textUpper = rawText.toUpperCase();
+        for (const loc of KNOWN_LOCATIONS) {
+            if (textUpper.includes(loc)) {
+                data.location = loc;
+                break;
+            }
+        }
+    }
+
+    // Strategy 2: ShipTo address contains location city
+    if (!data.location) {
+        const shipToLocMatch = rawText.match(
+            /ShipTo\s+.{0,100}?\b([A-Z][a-z]+(?:nagar|pur|lvi|lem|ind|war|lur)?)\b/i
+        );
+        if (shipToLocMatch) data.location = shipToLocMatch[1]?.trim() ?? "";
+    }
+
+    // Strategy 3: Labeled pattern with length cap
     if (!data.location) {
         const locationMatch = rawText.match(
-            /(?:Location|Plant|Site|Delivery\s*(?:to|at|point))[:\s]*([^\n\r]+)/i
+            /(?:Location|Plant|Site|Delivery\s*(?:to|at|point))[:\s]*([^\n\r]{1,100})/i
         );
         if (locationMatch) {
-            data.location = locationMatch[1]?.trim() ?? "";
+            const loc = locationMatch[1]?.trim() ?? "";
+            data.location = loc.length <= 100 ? loc : loc.substring(0, 100);
         }
+    }
+
+    // Extract supply type from text if not from filename
+    if (!data.supplyType) {
+        const supplyMatch = rawText.match(/\b(Revenue\s+Supply|Capital\s+Supply)\b/i);
+        if (supplyMatch) data.supplyType = supplyMatch[1]?.trim() ?? "";
+    }
+
+    // Extract start date (Response start date)
+    const startDateMatch = rawText.match(
+        /(?:Response\s*start\s*date|Start\s*Date|Open\s*Date|Event\s*Start)\s*[:\s]*(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i
+    );
+    if (startDateMatch) {
+        data.startDate = parseAribaDate(startDateMatch[1]?.trim() ?? "");
+    }
+
+    // Extract due date
+    const dueDateMatch = rawText.match(
+        /(?:Due\s*date|Deadline|Response\s*Due|Closing\s*Date|End\s*Date)\s*[:\s]*(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i
+    );
+    if (dueDateMatch) {
+        data.dueDate = parseAribaDate(dueDateMatch[1]?.trim() ?? "");
     }
 
     // Extract item details from text
@@ -352,6 +522,8 @@ export async function parseRfpDocument(
                 supplyType: "",
                 location: "",
                 companyName: "",
+                startDate: "",
+                dueDate: "",
                 items: [],
                 rawText: "",
             },

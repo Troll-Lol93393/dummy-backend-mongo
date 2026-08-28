@@ -2,8 +2,10 @@ import dotenv from "dotenv";
 dotenv.config({ path: "./.env" });
 
 import dbConnect from "./config/dbConnect";
+import { seedDefaultAdmin } from "./config/seedAdmin";
 import { app } from "./app";
 import { startRfqScheduler } from "./cron/rfqScheduler";
+import { startEmailScheduler } from "./cron/emailScheduler";
 import { logger } from "./utils/logger";
 import { AuditLog } from "./models/auditLog.model";
 
@@ -85,7 +87,7 @@ process.on("SIGINT", () => {
 
 // Start server
 dbConnect()
-    .then(() => {
+    .then(async () => {
         const port = process.env.PORT || 8081;
         app.listen(port, () => {
             logger.info("SERVER", `Server is running on port ${port}`, {
@@ -109,8 +111,10 @@ dbConnect()
             }).catch(() => {});
         });
 
-        // Start cron jobs after DB is connected
+        // Seed default admin & start cron jobs after DB is connected
+        await seedDefaultAdmin();
         startRfqScheduler();
+        startEmailScheduler();
     })
     .catch(err => {
         logger.critical("DATABASE", "MongoDB connection failed", {

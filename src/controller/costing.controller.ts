@@ -474,6 +474,39 @@ async function buildCostingSheetData(rfqId: string): Promise<CostingSheetData> {
 
     const grandTotal = items.reduce((sum, i) => sum + i.totalCost, 0);
 
+    // Fetch regretted items for this RFQ
+    const rfqItemIds = (rfq.items as unknown as string[]) ?? [];
+    const regrettedRfqItems = await RFQItems.find({
+        _id: { $in: rfqItemIds },
+        isDeleted: false,
+        isRegret: true,
+    })
+        .populate("item")
+        .lean();
+
+    const REGRET_REASON_LABELS: Record<string, string> = {
+        NOT_IN_SCOPE: "Not in our scope",
+        DRAWING_NOT_RECEIVED: "Drawing not received",
+        ITEM_NOT_AVAILABLE: "Item not available",
+    };
+
+    const regrettedItems = regrettedRfqItems.map(ri => {
+        const item = ri.item as any;
+        let reasonText = "";
+        if (ri.regretReason === "CUSTOM") {
+            reasonText = ri.regretReasonCustom || "Custom reason";
+        } else {
+            reasonText = REGRET_REASON_LABELS[ri.regretReason ?? ""] ?? ri.regretReason ?? "";
+        }
+        return {
+            serialNumber: ri.serialNumber ?? "",
+            itemCode: item?.itemCode ?? "",
+            itemName: item?.itemName ?? "",
+            quantity: ri.quantity ?? 1,
+            regretReason: reasonText,
+        };
+    });
+
     return {
         prNumber: rfq.prNumber,
         companyName: rfq.companyName,
@@ -485,6 +518,7 @@ async function buildCostingSheetData(rfqId: string): Promise<CostingSheetData> {
         }),
         items,
         grandTotal,
+        regrettedItems,
     };
 }
 

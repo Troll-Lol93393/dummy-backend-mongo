@@ -8,14 +8,17 @@ import { logger } from "./utils/logger";
 import { AuditLog } from "./models/auditLog.model";
 
 const app: Application = express();
+const corsOrigins = [
+    "https://hoppscotch.io",
+    "https://app.hoppscotch.io",
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "https://sheth-engg-frontend-dev.vercel.app",
+    ...(process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map(s => s.trim()) : []),
+];
 app.use(
     cors({
-        origin: [
-            "https://hoppscotch.io",
-            "https://app.hoppscotch.io",
-            "http://localhost:3000",
-            "http://localhost:3001",
-        ],
+        origin: corsOrigins,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
         exposedHeaders: ["Content-Disposition"],
@@ -50,6 +53,10 @@ import companyProfileRoutes from "./routes/companyProfile.routes";
 import { staffRoutes } from "./routes/staff.routes";
 import { notificationRoutes } from "./routes/notification.routes";
 import { auditLogRoutes } from "./routes/auditLog.routes";
+import { emailRoutes } from "./routes/email.routes";
+import salesRoutes from "./routes/sales.routes";
+import { paymentRoutes } from "./routes/payment.routes";
+import { syncRoutes } from "./routes/sync.routes";
 
 app.use("/api/v1/user", userRoutes);
 app.use("/api/v1/rfq", rfqRoutes);
@@ -69,6 +76,10 @@ app.use("/api/v1/company-profile", companyProfileRoutes);
 app.use("/api/v1/staff", staffRoutes);
 app.use("/api/v1/notification", notificationRoutes);
 app.use("/api/v1/audit-logs", auditLogRoutes);
+app.use("/api/v1/email", emailRoutes);
+app.use("/api/v1/sales", salesRoutes);
+app.use("/api/v1/payment", paymentRoutes);
+app.use("/api/v1/internal/sync", syncRoutes);
 
 // Health check endpoint — designed for UptimeRobot (every 5 minutes)
 // Returns detailed system health for monitoring and keeps Render active

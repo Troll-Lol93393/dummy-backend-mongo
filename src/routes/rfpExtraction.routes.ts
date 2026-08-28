@@ -6,6 +6,12 @@ import {
     confirmAndSave,
     bulkUploadAndExtract,
     reExtract,
+    reExtractFromUrl,
+    extractSingleItem,
+    extractSingleItemFromUrl,
+    discoverDrawings,
+    applyExtractionToRfq,
+    addItemToRfq,
 } from "../controller/rfpExtraction.controller";
 
 const rfpExtractionRoutes = Router();
@@ -39,6 +45,49 @@ rfpExtractionRoutes.post(
     verifyJWT,
     upload.single("rfpFile"),
     reExtract
+);
+
+// Re-extract from a stored Cloudinary URL (no file upload needed)
+rfpExtractionRoutes.post(
+    "/re-extract-url",
+    verifyJWT,
+    reExtractFromUrl
+);
+
+// Single item extraction — upload file + serialNumber, get one item back (token-efficient)
+rfpExtractionRoutes.post(
+    "/single-item",
+    verifyJWT,
+    upload.single("rfpFile"),
+    extractSingleItem
+);
+
+// Single item extraction from stored URL (no upload)
+rfpExtractionRoutes.post(
+    "/single-item-url",
+    verifyJWT,
+    extractSingleItemFromUrl
+);
+
+// Add a single item to an existing RFQ (append, not replace)
+rfpExtractionRoutes.post(
+    "/add-item/:rfqId",
+    verifyJWT,
+    addItemToRfq
+);
+
+// Apply extracted items to an existing RFQ (replaces current items)
+rfpExtractionRoutes.post(
+    "/apply/:rfqId",
+    verifyJWT,
+    applyExtractionToRfq
+);
+
+// Discovery: screenshot Ariba page, find attachment links, attempt drawing downloads
+rfpExtractionRoutes.post(
+    "/discover-drawings",
+    verifyJWT,
+    discoverDrawings
 );
 
 export { rfpExtractionRoutes };

@@ -10,6 +10,8 @@ export interface IRfq {
     ownerName: string;
     companyName: string;
     location: string;
+    documentUrl?: string;
+    drawings: { url: string; filename: string }[];
     isQuoted: boolean;
     quotedOn?: Date;
     quotationNumber?: number;
@@ -22,6 +24,7 @@ export interface IRfq {
     items: RFQItems[];
     activeTechnicalOffer?: ITechnicalOffer;
     activeCommercialOffer?: ICommercialOffer;
+    isReviewed: boolean;
     isDeleted: boolean;
     createdBy: string;
     updatedBy: string;
@@ -58,6 +61,11 @@ export const rfqSchema: Schema<IRfq> = new Schema(
             trim: true,
             required: [true, "Location is required !"],
         },
+        documentUrl: { type: String },
+        drawings: [{
+            url: { type: String },
+            filename: { type: String },
+        }],
         isQuoted: {
             type: Boolean,
             default: false,
@@ -119,6 +127,10 @@ export const rfqSchema: Schema<IRfq> = new Schema(
         activeCommercialOffer: {
             type: Schema.Types.ObjectId,
             ref: "CommercialOffer",
+        },
+        isReviewed: {
+            type: Boolean,
+            default: false,
         },
         isDeleted: {
             type: Boolean,

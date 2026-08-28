@@ -1,5 +1,5 @@
-import { extractTextFromFile, parseRfpDocument, ParsedRfpData } from "./docParser";
-import { extractWithAI, isAIAvailable } from "./aiExtractor";
+import { extractTextFromFile, parseRfpDocument, ParsedRfpData, ParsedItem } from "./docParser";
+import { extractWithAI, extractSingleItemWithAI, isAIAvailable, ProviderConfig } from "./aiExtractor";
 
 export interface ExtractionResult {
     success: boolean;
@@ -8,10 +8,35 @@ export interface ExtractionResult {
     confidence: number;
     data: ParsedRfpData;
     errors: string[];
+    providerName?: string;
+}
+
+// Defined as a function so env vars are read at request time (after dotenv loads), not at module init
+function getAIProviders(): ProviderConfig[] {
+    return [
+        {
+            name: "Groq",
+            apiUrl: "https://api.groq.com/openai/v1/chat/completions",
+            model: process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+            apiKey: process.env.GROQ_API_KEY || "",
+        },
+        {
+            name: "Cerebras",
+            apiUrl: "https://api.cerebras.ai/v1/chat/completions",
+            model: "qwen-3-235b-a22b-instruct-2507",
+            apiKey: process.env.CEREBRAS_API_KEY || "",
+        },
+        {
+            name: "OpenRouter",
+            apiUrl: "https://openrouter.ai/api/v1/chat/completions",
+            model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free",
+            apiKey: process.env.OPENROUTER_API_KEY || "",
+        },
+    ];
 }
 
 // Orchestrates the 3-layer extraction pipeline:
-// Layer 1: AI (Ollama) → Layer 2: JS Parser (mammoth/pdf-parse) → Layer 3: Manual
+// Layer 1: AI providers (Groq → Cerebras → OpenRouter) → Layer 2: JS Parser → Layer 3: Manual
 export async function runExtractionPipeline(
     filePath: string,
     originalFilename: string
@@ -19,7 +44,7 @@ export async function runExtractionPipeline(
     const errors: string[] = [];
     let rawText = "";
 
-    // Step 1: Extract raw text from document (needed by both layers)
+    // Step 1: Extract raw text from document (needed by all layers)
     try {
         rawText = await extractTextFromFile(filePath);
     } catch (err: unknown) {
@@ -27,12 +52,20 @@ export async function runExtractionPipeline(
         errors.push(`Text extraction error: ${msg}`);
     }
 
-    // Layer 1: Try AI extraction first
+    // Layer 1: Try AI providers in order
     if (rawText) {
-        try {
-            const aiUp = await isAIAvailable();
-            if (aiUp) {
-                const aiResult = await extractWithAI(rawText, originalFilename);
+        const activeProviders = getAIProviders().filter(p => p.apiKey !== "");
+
+        for (const provider of activeProviders) {
+            try {
+                const aiUp = await isAIAvailable(provider);
+                if (!aiUp) {
+                    errors.push(`${provider.name} AI service not available, trying next provider`);
+                    continue;
+                }
+
+                const aiResult = await extractWithAI(rawText, originalFilename, provider);
+
                 if (aiResult.success && aiResult.confidence >= 50) {
                     return {
                         success: true,
@@ -41,19 +74,18 @@ export async function runExtractionPipeline(
                         confidence: aiResult.confidence,
                         data: aiResult.data,
                         errors: [],
+                        providerName: provider.name,
                     };
                 }
                 if (aiResult.confidence > 0 && aiResult.confidence < 50) {
-                    errors.push(
-                        `AI extraction returned low confidence (${aiResult.confidence}%), falling back to parser`
-                    );
+                    errors.push(`${provider.name} returned low confidence (${aiResult.confidence}%), trying next provider`);
+                } else if (aiResult.confidence === 0) {
+                    errors.push(`${provider.name} returned no usable data (confidence 0%), trying next provider`);
                 }
-            } else {
-                errors.push("Groq AI service not available, falling back to parser");
+            } catch (err: unknown) {
+                const msg = err instanceof Error ? err.message : "AI extraction failed";
+                errors.push(`${provider.name} error: ${msg}`);
             }
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : "AI extraction failed";
-            errors.push(`AI Layer error: ${msg}`);
         }
     }
 
@@ -83,18 +115,30 @@ export async function runExtractionPipeline(
         supplyType: "",
         location: "",
         companyName: "",
+        startDate: "",
+        dueDate: "",
         items: [],
         rawText,
     };
 
     // Try to at least parse the filename for some metadata
     const filenameMatch = originalFilename.match(
-        /^RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+)-(.+)\.(doc|docx|pdf)$/i
+        /RFP\s*-\s*(\d{10})-(\d{10})-(.+?)-([A-Z]+(?:\s*-\s*[A-Z]+)*)-(.+)\.(doc|docx|pdf)$/i
     );
     if (filenameMatch) {
         manualData.prNumber = filenameMatch[1] ?? "";
         manualData.supplyType = filenameMatch[3]?.trim() ?? "";
         manualData.location = filenameMatch[4]?.trim() ?? "";
+    }
+    // Also try Templates pattern
+    if (!manualData.prNumber) {
+        const templatesMatch = originalFilename.match(
+            /RFP\s+Templates[_-]PR[_-](\d{10})[_-](\d{10})[_-]([A-Z_]+)/i
+        );
+        if (templatesMatch) {
+            manualData.prNumber = templatesMatch[1] ?? "";
+            manualData.location = (templatesMatch[3] ?? "").replace(/_/g, " ").trim();
+        }
     }
 
     return {
@@ -105,6 +149,50 @@ export async function runExtractionPipeline(
         data: manualData,
         errors,
     };
+}
+
+export interface SingleItemExtractionResult {
+    success: boolean;
+    layer: "AI" | "MANUAL";
+    confidence: number;
+    item: ParsedItem | null;
+    errors: string[];
+}
+
+export async function runSingleItemExtractionPipeline(
+    filePath: string,
+    originalFilename: string,
+    serialNumber: string
+): Promise<SingleItemExtractionResult> {
+    const errors: string[] = [];
+    let rawText = "";
+
+    try {
+        rawText = await extractTextFromFile(filePath);
+    } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Text extraction failed";
+        errors.push(`Text extraction error: ${msg}`);
+    }
+
+    if (rawText) {
+        const activeProviders = getAIProviders().filter(p => p.apiKey !== "");
+        for (const provider of activeProviders) {
+            try {
+                const aiUp = await isAIAvailable(provider);
+                if (!aiUp) { errors.push(`${provider.name} not available`); continue; }
+
+                const result = await extractSingleItemWithAI(rawText, originalFilename, serialNumber, provider);
+                if (result.success && result.item) {
+                    return { success: true, layer: "AI", confidence: result.confidence, item: result.item, errors: [] };
+                }
+                errors.push(`${provider.name} returned low confidence (${result.confidence}%)`);
+            } catch (err: unknown) {
+                errors.push(`${provider.name} error: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+    }
+
+    return { success: false, layer: "MANUAL", confidence: 0, item: null, errors };
 }
 
 function calculateParserConfidence(data: ParsedRfpData): number {
