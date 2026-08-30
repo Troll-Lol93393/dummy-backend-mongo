@@ -7,6 +7,7 @@ import { Client } from "../models/client.model";
 import { Party } from "../models/party.model";
 import { Sales } from "../models/sales.model";
 import { Purchase } from "../models/purchase.model";
+import { getFinancialYearLabel } from "../utils/financialYear";
 
 // Receiving side for the jow-legacy-sync agent. The agent already did the
 // content-hash diffing on its side - it only sends what's actually new or
@@ -50,6 +51,15 @@ function requireDeleteKeys(req: Request): string[] {
     return records.map(
         (r: { naturalKey: string }) => r.naturalKey
     );
+}
+
+function requireLegacySalesIdentity(record: Record<string, unknown>): void {
+    if (
+        typeof record.legacyContra !== "number" || !Number.isFinite(record.legacyContra) ||
+        typeof record.legacySrno !== "number" || !Number.isFinite(record.legacySrno)
+    ) {
+        throw new ApiError(400, "Every synced Sales record must include numeric legacyContra and legacySrno");
+    }
 }
 
 
@@ -542,6 +552,7 @@ export const syncDeleteParties = asyncHandler(
 export const syncSales = asyncHandler(
     async (req: Request, res: Response) => {
         const records = requireRecords(req);
+        records.forEach(requireLegacySalesIdentity);
 
         const itemCodes = [
             ...new Set(
@@ -577,13 +588,16 @@ export const syncSales = asyncHandler(
             const ops = batch.map(record => ({
                 updateOne: {
                     filter: {
-                        invoiceNumber: record.invoiceNumber,
-                        serialNumber: record.serialNumber
+                        legacyContra: record.legacyContra,
+                        legacySrno: record.legacySrno
                     },
 
                     update: {
                         $set: {
                             ...record,
+                            financialYear: getFinancialYearLabel(
+                                new Date(record.dispatchDate as string | number | Date)
+                            ),
 
                             item: itemMap.get(
                                 record.itemCode as string
@@ -634,14 +648,18 @@ export const syncDeleteSales = asyncHandler(
 
         for (const key of keys) {
             const [
-                invoiceNumber,
-                serialNumberStr
+                contraStr,
+                srnoStr
             ] = key.split(":");
+
+            if (!contraStr || !srnoStr || !/^\d+$/.test(contraStr) || !/^\d+$/.test(srnoStr)) {
+                throw new ApiError(400, `Invalid legacy Sales natural key: ${key}`);
+            }
 
             const result = await Sales.updateOne(
                 {
-                    invoiceNumber,
-                    serialNumber: Number(serialNumberStr)
+                    legacyContra: Number(contraStr),
+                    legacySrno: Number(srnoStr)
                 },
                 {
                     $set: {
