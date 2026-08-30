@@ -1,6 +1,8 @@
 import mongoose, { Schema } from "mongoose";
 
 export interface ISales {
+    legacyContra?: number;
+    legacySrno?: number;
     invoiceNumber: string;
     invoiceDate: Date;
     dispatchDate: Date;
@@ -54,6 +56,8 @@ export interface ISales {
 
 const salesSchema: Schema<ISales> = new Schema(
     {
+        legacyContra: { type: Number, index: true },
+        legacySrno: { type: Number },
         invoiceNumber: {
             type: String,
             required: [true, "Invoice number is required"],
@@ -212,10 +216,17 @@ const salesSchema: Schema<ISales> = new Schema(
     { timestamps: true }
 );
 
-// Natural key for idempotent re-import: one line item per invoice+serial number.
+// Legacy SALES reuses invoice numbers; synced rows are identified by CONTRA+SRNO.
 salesSchema.index(
-    { invoiceNumber: 1, serialNumber: 1 },
-    { unique: true, partialFilterExpression: { isDeleted: false } }
+    { legacyContra: 1, legacySrno: 1 },
+    {
+        unique: true,
+        partialFilterExpression: {
+            isDeleted: false,
+            legacyContra: { $exists: true },
+            legacySrno: { $exists: true },
+        },
+    }
 );
 salesSchema.index({ poNumber: 1, itemCode: 1 });
 salesSchema.index({ invoiceDate: -1 });

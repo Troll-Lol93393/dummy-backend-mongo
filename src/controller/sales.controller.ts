@@ -631,7 +631,7 @@ export const getInvoices = asyncHandler(async (req: Request, res: Response, _nex
         { $sort: { _id: 1 } },
         {
             $group: {
-                _id: "$invoiceNumber",
+                _id: { invoiceNumber: "$invoiceNumber", legacyContra: "$legacyContra" },
                 // Any line item's _id works as a stable, URL-safe identifier for
                 // the whole invoice — routes resolve it back to invoiceNumber
                 // server-side. Avoids putting the raw invoice number (which
@@ -655,7 +655,8 @@ export const getInvoices = asyncHandler(async (req: Request, res: Response, _nex
             $project: {
                 _id: 0,
                 id: "$salesId",
-                invoiceNumber: "$_id",
+                invoiceNumber: "$_id.invoiceNumber",
+                legacyContra: "$_id.legacyContra",
                 dispatchDate: 1,
                 financialYear: 1,
                 poNumber: 1,
@@ -700,12 +701,15 @@ export const getInvoiceDetail = asyncHandler(async (req: Request, res: Response,
         throw new ApiError(400, "Invalid invoice ID");
     }
 
-    const anchor = await Sales.findOne({ _id: id, isDeleted: false }).select("invoiceNumber").lean();
+    const anchor = await Sales.findOne({ _id: id, isDeleted: false }).select("invoiceNumber legacyContra").lean();
     if (!anchor) {
         throw new ApiError(404, "Invoice not found");
     }
 
-    const items = await Sales.find({ invoiceNumber: anchor.invoiceNumber, isDeleted: false })
+    const invoiceFilter = anchor.legacyContra === undefined
+        ? { invoiceNumber: anchor.invoiceNumber, legacyContra: { $exists: false }, isDeleted: false }
+        : { legacyContra: anchor.legacyContra, isDeleted: false };
+    const items = await Sales.find(invoiceFilter)
         .sort({ serialNumber: 1 })
         .lean();
 

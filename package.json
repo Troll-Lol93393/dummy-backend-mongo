@@ -8,6 +8,7 @@
         "dev": "nodemon src/index.ts",
         "build": "npm install --include=dev && tsc",
         "build:watch": "tsc --watch",
+        "audit:sales-legacy-identity": "tsx src/scripts/auditSalesLegacyIdentity.ts",
         "clean": "rimraf dist",
         "format": "prettier --write \"src/**/*.{ts,js,json}\"",
         "format:check": "prettier --check \"src/**/*.{ts,js,json}\"",

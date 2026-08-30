@@ -7,6 +7,7 @@ import { Client } from "../models/client.model";
 import { Party } from "../models/party.model";
 import { Sales } from "../models/sales.model";
 import { Purchase } from "../models/purchase.model";
+import { getFinancialYearLabel } from "../utils/financialYear";
 
 // Receiving side for the jow-legacy-sync agent. The agent already did the
 // content-hash diffing on its side - it only sends what's actually new or
@@ -30,6 +31,15 @@ function requireDeleteKeys(req: Request): string[] {
     const records = req.body?.records;
     if (!Array.isArray(records)) throw new ApiError(400, "Expected { records: [{ naturalKey }] } in request body");
     return records.map((r: { naturalKey: string }) => r.naturalKey);
+}
+
+function requireLegacySalesIdentity(record: Record<string, unknown>): void {
+    if (
+        typeof record.legacyContra !== "number" || !Number.isFinite(record.legacyContra) ||
+        typeof record.legacySrno !== "number" || !Number.isFinite(record.legacySrno)
+    ) {
+        throw new ApiError(400, "Every synced Sales record must include numeric legacyContra and legacySrno");
+    }
 }
 
 export const syncItems = asyncHandler(async (req: Request, res: Response) => {
@@ -169,6 +179,7 @@ export const syncDeleteParties = asyncHandler(async (req: Request, res: Response
 
 export const syncSales = asyncHandler(async (req: Request, res: Response) => {
     const records = requireRecords(req);
+    records.forEach(requireLegacySalesIdentity);
     const itemCodes = [...new Set(records.map(r => r.itemCode as string))];
     const items = itemCodes.length
         ? await Item.find({ itemCode: { $in: itemCodes }, isDeleted: false }).select("_id itemCode").lean()
@@ -181,10 +192,11 @@ export const syncSales = asyncHandler(async (req: Request, res: Response) => {
     for (const batch of chunk(records, BULK_CHUNK_SIZE)) {
         const ops = batch.map(record => ({
             updateOne: {
-                filter: { invoiceNumber: record.invoiceNumber, serialNumber: record.serialNumber },
+                filter: { legacyContra: record.legacyContra, legacySrno: record.legacySrno },
                 update: {
                     $set: {
                         ...record,
+                        financialYear: getFinancialYearLabel(new Date(record.dispatchDate as string | number | Date)),
                         item: itemMap.get(record.itemCode as string),
                         status: record.cancelDate ? "CANCELLED" : "DISPATCHED",
                         isDeleted: false,
@@ -202,12 +214,15 @@ export const syncSales = asyncHandler(async (req: Request, res: Response) => {
 });
 
 export const syncDeleteSales = asyncHandler(async (req: Request, res: Response) => {
-    const keys = requireDeleteKeys(req); // "invoiceNumber:serialNumber"
+    const keys = requireDeleteKeys(req); // "legacyContra:legacySrno"
     let deletedCount = 0;
     for (const key of keys) {
-        const [invoiceNumber, serialNumberStr] = key.split(":");
+        const [contraStr, srnoStr] = key.split(":");
+        if (!contraStr || !srnoStr || !/^\d+$/.test(contraStr) || !/^\d+$/.test(srnoStr)) {
+            throw new ApiError(400, `Invalid legacy Sales natural key: ${key}`);
+        }
         const result = await Sales.updateOne(
-            { invoiceNumber, serialNumber: Number(serialNumberStr) },
+            { legacyContra: Number(contraStr), legacySrno: Number(srnoStr) },
             { $set: { isDeleted: true, deletedAt: new Date() } }
         );
         deletedCount += result.modifiedCount;
